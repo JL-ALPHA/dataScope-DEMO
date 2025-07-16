@@ -1,0 +1,36 @@
+📂 File Handler – Possible Functionalities
+📥 File Loading & Input
+    -Load large CSV/TSV/XLSX files
+    -Auto-detect delimiter
+    -Auto-chunk files into N-row parts
+    -Validate file encoding
+    -Basic filename sanitization
+🧱 Folder Structure Setup
+    Create a folder for each chunk
+    -/stages – snapshot of each step
+    -/process – cleaned data outputs (valid & invalid)
+    -/garbage – rows that failed hard (e.g. wrong number of columns)
+🧹 Data Cleaning Coordination
+    -Pass chunked data to cleaning functions
+    -Collect cleaned vs rejected rows
+    -Avoid file writing in cleaning functions (clean functions only return data)
+🔍 Load-Time Summary (Optional GUI / Print)
+    -Show total rows, total columns
+    -List column names
+    -Count of missing/null values per column
+    -Preview first few rows
+    -Warnings: blank headers, mixed types, null-heavy columns
+📈 Post-Clean Report
+    -Compare raw vs cleaned:
+    -Rows dropped
+    -Columns changed
+    -Nulls reduced
+    -Type conversions
+    -Save per-chunk HTML report
+📊 Final Output
+    -Combine cleaned chunks into one final CSV
+    -Save final dataset to user-defined location
+🧪 Edge Case Handling
+    -Handle inconsistent rows (too many/few columns)
+    -Skip empty files or warn
+    -Deal with mixed data types in columns
