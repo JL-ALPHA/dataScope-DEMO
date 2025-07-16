@@ -2,13 +2,15 @@ import flet as ft
 import asyncio
 import os
 from data_handler import create_dataset_environment, load_data, run_analysis
-
+import data_handler
 from pathlib import Path
 import json
 import sys
 
 # Global variable to store the DF (SEAN FEATURE BUILDOUT)
 current_df = None
+
+
 
 
 # Ensure the current directory is in sys.path
@@ -43,6 +45,8 @@ dialog_controls = {
     "status_label": None,
     "file_picker": None,
     "theme_switch": None,
+    "chunk_size_input": None,
+    "chunk_status": None,
 }
 
 async def write_output(message: str, page: ft.Page):
@@ -181,6 +185,62 @@ async def chunk_csv_handler(e: ft.ControlEvent):
 
     except Exception as ex:
         await write_output(f"[Error] Failed to chunk file: {ex}", e.page)
+
+async def handle_chunk_button(e: ft.ControlEvent):
+    page = e.page
+
+    file_path = data_handler.saved_filepath  # ✅ get latest saved path
+
+    if not file_path or not isinstance(file_path, (str, Path)):
+        dialog_controls["chunk_status"].value = "Please load a file first."
+        page.update()
+        return
+
+    dataset_name = Path(file_path).stem
+
+    try:
+        chunk_size = int(dialog_controls["chunk_size_input"].value)
+    except ValueError:
+        dialog_controls["chunk_status"].value = "Please enter a valid number for chunk size."
+        page.update()
+        return
+
+    dialog_controls["chunk_status"].value = "Chunking in progress..."
+    page.update()
+
+    result = split_into_chunks(
+        dataset_name,
+        file_path,
+        chunk_size_mb=chunk_size,
+        logger_fn=lambda msg: print(msg)
+    )
+
+    if result and result["total_chunks"] > 0:
+        dialog_controls["chunk_status"].value = (
+            f"Chunked {result['total_rows']} rows into {result['total_chunks']} files."
+        )
+    else:
+        dialog_controls["chunk_status"].value = "Chunking failed. See logs."
+
+    page.update()
+
+
+    result = split_into_chunks(
+        dataset_name,
+        save_filepath,
+        chunk_size_mb=chunk_size,
+        logger_fn=lambda msg: print(msg)
+    )
+
+    if result and result["total_chunks"] > 0:
+        dialog_controls["chunk_status"].value = (
+            f"Chunked {result['total_rows']} rows into {result['total_chunks']} files."
+        )
+    else:
+        dialog_controls["chunk_status"].value = "Chunking failed. See logs."
+
+    page.update()
+
 
 
 
@@ -418,6 +478,9 @@ async def transition_to_gui(page: ft.Page):
     ], spacing=10, alignment=ft.MainAxisAlignment.START)
 
     # 5) Build Tabs in one shot
+    dialog_controls["chunk_size_input"] = ft.TextField(label="Chunk size (MB)", value="256", width=200)
+    dialog_controls["chunk_status"] = ft.Text(value="", color=ft.Colors.GREY_700)
+
     tabs = ft.Tabs(
         selected_index=0,
         animation_duration=200,
@@ -436,15 +499,14 @@ async def transition_to_gui(page: ft.Page):
                 text="Data Tools",
                 content=ft.Column([
                     ft.Text("🔧 Data Tools", style="titleMedium", color=ft.Colors.GREY_800),
+                    dialog_controls["chunk_size_input"],
                     ft.ElevatedButton(
-                        text="🔪 Chunk CSV",
+                        text="Chunk CSV",
                         icon=ft.Icons.CONTENT_CUT,
-                        #on_click= handle_chunk_button
+                        on_click=handle_chunk_button
                     ),
-                    ft.Text("Splits the currently loaded CSV into 256MB chunks.",
-                            size=12, italic=True, color=ft.Colors.GREY_600),
-                    dialog_controls["status_label"],
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=20)
+                    dialog_controls["chunk_status"],
+                ])
             ),
             ft.Tab(
                 text="Advanced tools",
@@ -459,6 +521,7 @@ async def transition_to_gui(page: ft.Page):
             )
         ]
     )
+
 
     # 6) Render
     page.add(ft.Column([header, tabs], expand=True))

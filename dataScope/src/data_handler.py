@@ -88,29 +88,33 @@ def get_data_stats(df, file_path):
 
 def split_into_chunks(dataset_name, input_file, chunk_size_mb=256, logger_fn=None):
     try:
-        # 🔗 Get structured folder paths from data_handler
         paths = create_dataset_environment(dataset_name)
         output_dir = paths["chunks"]
-
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            logging.info(f"Created output directory: {output_dir}")
 
         chunk_size_bytes = chunk_size_mb * 1024 * 1024
         base_filename = os.path.splitext(os.path.basename(input_file))[0]
 
         def log(msg):
-            print(msg)
             if logger_fn:
                 logger_fn(msg)
+            else:
+                print(msg)
 
-        log(f"📁 Reading from: {input_file}")
-        log(f"📦 Writing chunks to: {output_dir}")
-        log(f"📐 Chunk size: {chunk_size_mb} MB")
+        log(f"Reading from: {input_file}")
+        log(f"Writing chunks to: {output_dir}")
+        log(f"Chunk size: {chunk_size_mb} MB")
 
         with open(input_file, 'r', encoding='utf-8') as infile:
             reader = csv.reader(infile)
-            header = next(reader)
+            try:
+                header = next(reader)
+            except StopIteration:
+                log("Error: File is empty or missing a header.")
+                return {
+                    "total_rows": 0,
+                    "total_chunks": 0,
+                    "output_dir": str(output_dir)
+                }
 
             chunk_index = 0
             current_chunk = []
@@ -118,15 +122,15 @@ def split_into_chunks(dataset_name, input_file, chunk_size_mb=256, logger_fn=Non
             row_count = 0
 
             for row in tqdm(reader, desc="Splitting CSV", unit="rows"):
-                row_size = sum(len(str(cell)) for cell in row) + len(row)
+                row_size = len(",".join(row).encode("utf-8"))
+
                 if current_chunk_size + row_size > chunk_size_bytes:
                     output_file = os.path.join(output_dir, f"{base_filename}_chunk_{chunk_index}.csv")
                     with open(output_file, 'w', encoding='utf-8', newline='') as outfile:
                         writer = csv.writer(outfile)
                         writer.writerow(header)
                         writer.writerows(current_chunk)
-
-                    log(f"✅ Chunk {chunk_index} written: {len(current_chunk)} rows")
+                    log(f"Chunk {chunk_index} written: {len(current_chunk)} rows")
 
                     chunk_index += 1
                     current_chunk = []
@@ -143,26 +147,33 @@ def split_into_chunks(dataset_name, input_file, chunk_size_mb=256, logger_fn=Non
                     writer = csv.writer(outfile)
                     writer.writerow(header)
                     writer.writerows(current_chunk)
-                log(f"✅ Final chunk {chunk_index}: {len(current_chunk)} rows")
+                log(f"Final chunk {chunk_index} written: {len(current_chunk)} rows")
 
-        log(f"🏁 All chunks written. Total rows: {row_count}")
-        log(f"📂 Output directory contents: {os.listdir(output_dir)}")
+        log(f"All chunks written. Total rows: {row_count}")
+        log(f"Output directory contents: {os.listdir(output_dir)}")
 
         return {
             "total_rows": row_count,
             "total_chunks": chunk_index + 1,
-            "output_dir": output_dir
+            "output_dir": str(output_dir)
         }
 
     except FileNotFoundError as e:
         logging.error(f"File not found: {e}")
-        if logger_fn: logger_fn(f"❌ Error: {e}")
+        if logger_fn: logger_fn(f"Error: {e}")
     except PermissionError as e:
         logging.error(f"Permission error: {e}")
-        if logger_fn: logger_fn(f"❌ Error: {e}")
+        if logger_fn: logger_fn(f"Error: {e}")
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
-        if logger_fn: logger_fn(f"❌ Unexpected error: {e}")
+        if logger_fn: logger_fn(f"Unexpected error: {e}")
+
+    return {
+        "total_rows": 0,
+        "total_chunks": 0,
+        "output_dir": ""
+    }
+
 
 
 
