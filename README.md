@@ -12,7 +12,7 @@
   - Needs layout refinements
 - The Settings tab:
   - Should offer an option to select the app’s work folder location (requires data handler integration)
-- *Button color lightening throughout the GUI to enhance visibility*
+- Button color lightening throughout the GUI to enhance visibility*
 
 **Data Handler**
 - Filetype Converter – (Glenroy, in progress)
