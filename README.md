@@ -16,7 +16,7 @@
 
 **Data Handler**
 - Filetype Converter – (Glenroy, in progress)
-- Chunker Functionality – (Hadley)
+- Chunker Functionality – (Hadley, Currently working, No progress reporting)
 - Any remaining feature additions from the DataScope Tkinter version
 
 *Starred items are nice-to-haves, not critical for v1.*
