@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['dataScope\\src\\flet_datascope_test.py'],
-    pathex=[],
+    ['src\\datascope_UI.py'],
+    pathex=['src'],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('assets', 'assets')],
+    hiddenimports=['data_handler', 'pandas', 'numpy', 'tabulate'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -29,7 +29,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
