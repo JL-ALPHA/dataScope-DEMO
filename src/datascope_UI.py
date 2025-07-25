@@ -1,3 +1,6 @@
+
+"""Main Flet UI for the Datascope application."""
+
 import sys, os
 
 # Determine where assets were unpacked.
@@ -37,7 +40,9 @@ import json
 import sys
 import math
 
-dev_mode = False  # Set to True for development mode, False for production
+# When ``True`` developer-only buttons are shown in the UI.
+# Restart the application after changing this value.
+dev_mode: bool = False  # Set to ``True`` for development mode
 
 # Global variable to store the DF (SEAN FEATURE BUILDOUT)
 current_df = None
@@ -132,6 +137,8 @@ dialog_controls = {
     "search_index": 0,
     "convert_format": "csv",
     "analysis_text": "",
+    "data_table": None,
+    "data_table_info": None,
 }
 
 export_context = None
@@ -188,6 +195,91 @@ def focus_console_tab(page: ft.Page):
     if tabs:
         tabs.selected_index = 0
         page.update()
+
+
+def focus_dataview_tab(page: ft.Page):
+    """Switch to the Data View tab if the tab control exists."""
+    tabs = dialog_controls.get("tabs")
+    if tabs:
+        tabs.selected_index = 1  # Data View tab is at index 1
+        page.update()
+
+
+def apply_data_table_theme(page: ft.Page):
+    """Apply theme colors to the DataTable based on current theme mode."""
+    data_table = dialog_controls.get("data_table")
+    if not data_table:
+        return
+    
+    # Determine if we're in dark mode
+    is_dark_mode = page.theme_mode == ft.ThemeMode.DARK
+    
+    # Apply colors based on theme
+    if is_dark_mode:
+        data_table.bgcolor = ft.Colors.GREY_900
+        data_table.heading_row_color = ft.Colors.GREY_700
+        data_table.border = ft.border.all(1, ft.Colors.GREY_600)
+        data_table.vertical_lines = ft.BorderSide(1, ft.Colors.GREY_600)
+        data_table.horizontal_lines = ft.BorderSide(1, ft.Colors.GREY_600)
+    else:
+        data_table.bgcolor = ft.Colors.WHITE
+        data_table.heading_row_color = ft.Colors.GREY_100
+        data_table.border = ft.border.all(1, ft.Colors.GREY_400)
+        data_table.vertical_lines = ft.BorderSide(1, ft.Colors.GREY_300)
+        data_table.horizontal_lines = ft.BorderSide(1, ft.Colors.GREY_300)
+    
+    # Also update the container border if it exists
+    data_table_container = None
+    tabs = dialog_controls.get("tabs")
+    if tabs and len(tabs.tabs) > 1:  # Data View is at index 1
+        data_view_tab = tabs.tabs[1]
+        if hasattr(data_view_tab, 'content') and hasattr(data_view_tab.content, 'controls'):
+            for control in data_view_tab.content.controls:
+                if isinstance(control, ft.Container) and hasattr(control, 'content'):
+                    if control.content == data_table:
+                        data_table_container = control
+                        break
+    
+    if data_table_container:
+        if is_dark_mode:
+            data_table_container.border = ft.border.all(1, ft.Colors.GREY_600)
+        else:
+            data_table_container.border = ft.border.all(1, ft.Colors.GREY_300)
+
+
+def update_data_table(df, page: ft.Page, max_rows=100):
+    """Update the data table with DataFrame content and switch to Data View tab."""
+    if df is None or df.empty:
+        return
+    
+    # Limit the number of rows to display for performance
+    display_df = df.head(max_rows)
+    
+    # Create columns for the DataTable
+    columns = [ft.DataColumn(ft.Text(col)) for col in display_df.columns]
+    
+    # Create rows for the DataTable
+    rows = []
+    for index, row in display_df.iterrows():
+        cells = [ft.DataCell(ft.Text(str(value))) for value in row]
+        rows.append(ft.DataRow(cells=cells))
+    
+    # Update the data table
+    data_table = dialog_controls.get("data_table")
+    if data_table:
+        data_table.columns = columns
+        data_table.rows = rows
+        
+        # Update the row count label
+        total_rows = len(df)
+        displayed_rows = len(display_df)
+        dialog_controls["data_table_info"].value = f"Showing {displayed_rows} of {total_rows} rows"
+        
+        # Apply theme colors to the table
+        apply_data_table_theme(page)
+        
+        # Switch to Data View tab and update
+        focus_dataview_tab(page)
 
 
 async def update_progress(progress: float, message: str, page: ft.Page):
@@ -248,6 +340,38 @@ async def reset_app_state(page: ft.Page):
     page.update()
 
 
+def unload_current_dataset(page: ft.Page) -> None:
+    """Clear the current dataset and disable test buttons."""
+
+    global current_df, data_loaded
+    if not data_loaded:
+        return
+
+    logging.info("Unloading current dataset")
+    print("[GUI] Unloading current dataset")
+    current_df = None
+    data_loaded = False
+
+    for btn_key in ("btn_log", "btn_data", "btn_visual"):
+        btn = dialog_controls.get(btn_key)
+        if btn:
+            btn.disabled = True
+
+    dialog_controls["status_label"].value = "Dataset unloaded. Select a file."
+    dialog_controls["status_label"].color = ft.Colors.BLUE
+
+    out = dialog_controls.get("output_text_field")
+    if out:
+        out.value = ""
+
+    try:
+        data_handler.saved_filepath = None
+    except Exception:
+        pass
+
+    page.update()
+
+
 async def logging_handler_test(e: ft.ControlEvent):
     page = e.page
     if not await check_data_loaded(page):
@@ -255,6 +379,10 @@ async def logging_handler_test(e: ft.ControlEvent):
     await write_output(
         "[Logging Handler] Beep Boop Beep, Test Complete! (This is just text output.)", page
     )
+    # Show a sample of the data in the Data View tab
+    if current_df is not None:
+        sample_df = current_df.head(5)  # Show first 5 rows as a test
+        update_data_table(sample_df, page)
 
 
 async def data_handler_test(e: ft.ControlEvent):
@@ -262,6 +390,10 @@ async def data_handler_test(e: ft.ControlEvent):
     if not await check_data_loaded(page):
         return
     await write_output("[Data Handler] Beep Boop Beep, Test Complete! (This is just text output.)", page)
+    # Show data summary in the Data View tab
+    if current_df is not None:
+        summary_df = current_df.describe(include='all').transpose()  # Show data summary
+        update_data_table(summary_df, page)
 
 
 async def visual_analyst_test(e: ft.ControlEvent):
@@ -271,6 +403,18 @@ async def visual_analyst_test(e: ft.ControlEvent):
     await write_output(
         "[Visual Analyst] Beep Boop Beep, Test Complete! (This is just text output.)", page
     )
+    # Show data types and info in the Data View tab
+    if current_df is not None:
+        # Create a DataFrame with column information
+        import pandas as pd
+        info_data = {
+            'Column': current_df.columns.tolist(),
+            'Data Type': [str(dtype) for dtype in current_df.dtypes],
+            'Non-Null Count': [current_df[col].count() for col in current_df.columns],
+            'Null Count': [current_df[col].isnull().sum() for col in current_df.columns],
+        }
+        info_df = pd.DataFrame(info_data)
+        update_data_table(info_df, page)
 
 
 # FILE HANDLER BLOCK----------------------------------------------------------------------------------------
@@ -348,11 +492,15 @@ async def load_data_result(e: ft.FilePickerResultEvent):
         await write_output(info["log1"], page)
         await write_output(info["log2"], page)
 
+        # Update the data table with loaded data
+        update_data_table(df, page)
+
         # 4. Toggle buttons now that loading succeeded
         data_loaded = True
         dialog_controls["btn_log"].disabled = False
         dialog_controls["btn_data"].disabled = False
         dialog_controls["btn_visual"].disabled = False
+        dialog_controls["btn_dataview"].disabled = False
         dialog_controls["status_label"].value = "Ready"
         dialog_controls["status_label"].color = ft.Colors.GREEN
         dialog_controls["status_label"].weight = ft.FontWeight.BOLD
@@ -375,16 +523,25 @@ def handle_file_result(e: ft.FilePickerResultEvent):
 
 
 async def load_data_handler(e: ft.ControlEvent):
+    """Prompt the user for a file and ensure previous data is cleared."""
+
     page = e.page
+
+    # Clear any previously loaded dataset before prompting for a new file
+    unload_current_dataset(page)
+
     dialog_controls["status_label"].value = "Waiting..."
     dialog_controls["status_label"].color = ft.Colors.ORANGE
 
-    # ✅ Make sure the file_picker is set up *before* calling pick_files
-    if dialog_controls["file_picker"] is None:
-        dialog_controls["file_picker"] = ft.FilePicker(on_result=handle_file_result)
-        page.overlay.append(
-            dialog_controls["file_picker"]
-        )  # required for FilePicker to work
+    # (Re)create the file picker so prior selections do not persist
+    if dialog_controls["file_picker"] is not None:
+        try:
+            page.overlay.remove(dialog_controls["file_picker"])
+        except ValueError:
+            pass
+
+    dialog_controls["file_picker"] = ft.FilePicker(on_result=load_data_result)
+    page.overlay.append(dialog_controls["file_picker"])
 
     page.update()
     dialog_controls["file_picker"].pick_files(
@@ -586,12 +743,114 @@ async def analysis_handler(e: ft.ControlEvent):
     result = await asyncio.to_thread(run_analysis, current_df, atype, col, num, desc)
     dialog_controls["analysis_text"] = result
     await write_output(result, page)
+    
+    # Switch to Data View tab when running analysis
+    focus_dataview_tab(page)
+    
+    # If analysis returns tabular data, show it in the data table
+    if atype in ["Data Preview", "Missing Values", "Duplicate Detection", "Special Character Analysis", "Placeholder Detection"]:
+        if atype == "Data Preview":
+            # Show preview of the data
+            preview_df = current_df.head(num) if not desc else current_df.tail(num)
+            if col and col != "All Columns":
+                preview_df = preview_df[[col]]
+            update_data_table(preview_df, page)
+        elif atype == "Missing Values":
+            # Show missing values summary as a table
+            import pandas as pd
+            missing_data = {
+                'Column': current_df.columns.tolist(),
+                'Missing Count': [current_df[col].isnull().sum() for col in current_df.columns],
+                'Missing Percentage': [round((current_df[col].isnull().sum() / len(current_df)) * 100, 2) for col in current_df.columns],
+                'Total Count': [len(current_df) for _ in current_df.columns],
+                'Non-Missing Count': [current_df[col].count() for col in current_df.columns]
+            }
+            missing_df = pd.DataFrame(missing_data)
+            # Sort by missing count if requested
+            if desc:
+                missing_df = missing_df.sort_values('Missing Count', ascending=False)
+            update_data_table(missing_df, page)
+        elif atype == "Placeholder Detection":
+            # Show placeholder detection as a table
+            import pandas as pd
+            placeholders = ['N/A', 'NULL', 'null', 'None', 'none', 'nan', 'NaN', '-', '?', 'Unknown', 'unknown', '']
+            placeholder_data = []
+            for column in current_df.columns:
+                if current_df[column].dtype == 'object':  # Only analyze text columns
+                    placeholder_count = 0
+                    found_placeholders = []
+                    for placeholder in placeholders:
+                        count = (current_df[column].astype(str) == placeholder).sum()
+                        if count > 0:
+                            placeholder_count += count
+                            found_placeholders.append(f"{placeholder} ({count})")
+                    
+                    placeholder_data.append({
+                        'Column': column,
+                        'Placeholder Count': placeholder_count,
+                        'Placeholders Found': ', '.join(found_placeholders[:5]) + ('...' if len(found_placeholders) > 5 else ''),
+                        'Percentage': round((placeholder_count / len(current_df)) * 100, 2) if len(current_df) > 0 else 0
+                    })
+            
+            if placeholder_data:
+                placeholder_df = pd.DataFrame(placeholder_data)
+                if desc:
+                    placeholder_df = placeholder_df.sort_values('Placeholder Count', ascending=False)
+                update_data_table(placeholder_df, page)
+        elif atype == "Special Character Analysis":
+            # Show special character analysis as a table with ASCII and Non-ASCII breakdown
+            import pandas as pd
+            char_data = []
+            for column in current_df.columns:
+                if current_df[column].dtype == 'object':  # Only analyze text columns
+                    # Get all text from this column
+                    all_text = ' '.join(current_df[column].astype(str).tolist())
+                    
+                    # Separate ASCII and Non-ASCII special characters
+                    ascii_special = []
+                    non_ascii_special = []
+                    
+                    for char in set(all_text):
+                        if not char.isalnum() and not char.isspace():
+                            if ord(char) < 128:  # ASCII range
+                                ascii_special.append(char)
+                            else:  # Non-ASCII
+                                non_ascii_special.append(char)
+                    
+                    # Count total special characters
+                    total_special = len(ascii_special) + len(non_ascii_special)
+                    
+                    # Get counts of each character type in the actual data
+                    ascii_count = sum(all_text.count(char) for char in ascii_special)
+                    non_ascii_count = sum(all_text.count(char) for char in non_ascii_special)
+                    
+                    char_data.append({
+                        'Column': column,
+                        'Total Special Chars': total_special,
+                        'ASCII Special Count': len(ascii_special),
+                        'Non-ASCII Count': len(non_ascii_special),
+                        'ASCII Characters': ''.join(sorted(ascii_special)[:15]) + ('...' if len(ascii_special) > 15 else ''),
+                        'Non-ASCII Characters': ''.join(sorted(non_ascii_special)[:10]) + ('...' if len(non_ascii_special) > 10 else ''),
+                        'ASCII Frequency': ascii_count,
+                        'Non-ASCII Frequency': non_ascii_count
+                    })
+            
+            if char_data:
+                char_df = pd.DataFrame(char_data)
+                if desc:
+                    char_df = char_df.sort_values('Total Special Chars', ascending=False)
+                update_data_table(char_df, page)
+        elif atype == "Duplicate Detection":
+            # Show duplicate rows
+            duplicates = current_df[current_df.duplicated(keep=False)]
+            if not duplicates.empty:
+                update_data_table(duplicates, page)
+    
     app_busy = False
-    focus_console_tab(page)
 
 
 async def show_search_result(page: ft.Page):
-    """Display the current search result in the console."""
+    """Display the current search result in the console and data table."""
     results = dialog_controls.get("search_results")
     if not results:
         return
@@ -599,6 +858,9 @@ async def show_search_result(page: ft.Page):
     row = current_df.iloc[[results[idx]]]
     await write_output(row.to_string(index=False), page)
     dialog_controls["match_label"].value = f"{idx+1}/{len(results)}"
+    
+    # Show the search result row in the data table
+    update_data_table(row, page)
     page.update()
 
 
@@ -623,6 +885,10 @@ async def on_search(e: ft.ControlEvent):
         dialog_controls["match_label"].value = "0/0"
         return
 
+    # Show all search results in the data table
+    search_results_df = current_df.iloc[results]
+    update_data_table(search_results_df, e.page)
+    
     await show_search_result(e.page)
 
 
@@ -775,6 +1041,9 @@ def on_theme_toggle(e: ft.ControlEvent):
         page.dark_theme = ft.Theme(color_scheme_seed=dark_seed)
     else:
         page.theme = ft.Theme(color_scheme_seed=light_seed)
+
+    # Always update data table colors when theme changes
+    apply_data_table_theme(page)
 
     save_theme_preference(dark_mode)
     page.update()
@@ -954,7 +1223,7 @@ async def transition_to_gui(page: ft.Page):
         weight=ft.FontWeight.BOLD,
     )
 
-    # load / test buttons
+    # load / test buttons (test buttons hidden when ``dev_mode`` is False)
     btn_load = ft.ElevatedButton(
         text="Load Data",
         on_click=load_data_handler,
@@ -964,26 +1233,40 @@ async def transition_to_gui(page: ft.Page):
         text="Test Logging",
         on_click=logging_handler_test,
         disabled=True,
+        visible=dev_mode,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
     )
     dialog_controls["btn_data"] = ft.ElevatedButton(
         text="Test Data Handling",
         on_click=data_handler_test,
         disabled=True,
+        visible=dev_mode,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
     )
     dialog_controls["btn_visual"] = ft.ElevatedButton(
         text="Test Visual Analyst",
         on_click=visual_analyst_test,
         disabled=True,
+        visible=dev_mode,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
     )
+    
+    # Add a button to manually switch to Data View for testing
+    btn_dataview = ft.ElevatedButton(
+        text="View Data Table",
+        on_click=lambda e: focus_dataview_tab(e.page),
+        disabled=True,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+    )
+    dialog_controls["btn_dataview"] = btn_dataview
+    
     button_row = ft.Row(
         controls=[
             btn_load,
             dialog_controls["btn_log"],
             dialog_controls["btn_data"],
             dialog_controls["btn_visual"],
+            dialog_controls["btn_dataview"],
         ],
         alignment=ft.MainAxisAlignment.CENTER,
         spacing=10,
@@ -1007,14 +1290,13 @@ async def transition_to_gui(page: ft.Page):
         "Missing Values": "Report null counts.",
         "Duplicate Detection": "Find duplicated rows.",
         "Placeholder Detection": "Check for placeholder tokens.",
-        "Special Character Analysis": "List non-ASCII characters.",
+        "Special Character Analysis": "Analyze ASCII and Non-ASCII special characters with frequencies.",
     }
 
     desc_text = ft.Text(value="", size=12, color=ft.Colors.BLUE_GREY_600)
     dialog_controls["desc_text"] = desc_text
 
     def on_analysis_change(e: ft.ControlEvent):
-        focus_console_tab(e.page)
         desc_text.value = analysis_help.get(e.control.value, "")
         e.page.update()
 
@@ -1216,6 +1498,28 @@ async def transition_to_gui(page: ft.Page):
         ),
     )
 
+    # Create the Data View tab controls
+    dialog_controls["data_table"] = ft.DataTable(
+        columns=[ft.DataColumn(ft.Text("No Data"))],  # Default column to avoid error
+        rows=[],
+        border=ft.border.all(1, ft.Colors.GREY_400),
+        border_radius=10,
+        vertical_lines=ft.BorderSide(1, ft.Colors.GREY_300),
+        horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
+        heading_row_color=ft.Colors.GREY_100,
+        heading_row_height=50,
+        data_row_min_height=30,
+        data_row_max_height=60,
+        show_checkbox_column=False,
+        bgcolor=ft.Colors.WHITE,  # Ensure background is white
+    )
+    
+    dialog_controls["data_table_info"] = ft.Text(
+        "No data loaded",
+        color=ft.Colors.GREY_600,
+        size=12
+    )
+
     tabs = ft.Tabs(
         selected_index=0,
         animation_duration=200,
@@ -1234,6 +1538,26 @@ async def transition_to_gui(page: ft.Page):
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=10,
+                ),
+            ),
+            ft.Tab(
+                text="Data View",
+                content=ft.Column(
+                    [
+                        ft.Text("📊 Data View", style="titleMedium", color=ft.Colors.GREY_800),
+                        dialog_controls["data_table_info"],
+                        ft.Container(
+                            content=dialog_controls["data_table"],
+                            expand=True,
+                            padding=10,
+                            border_radius=10,
+                            border=ft.border.all(1, ft.Colors.GREY_300),
+                            # Remove bgcolor from container to let DataTable handle its own background
+                        ),
+                    ],
+                    spacing=10,
+                    expand=True,
+                    scroll=ft.ScrollMode.AUTO,
                 ),
             ),
             ft.Tab(
@@ -1280,5 +1604,4 @@ async def transition_to_gui(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main, assets_dir=ASSETS_DIR)
-
 

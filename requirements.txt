@@ -1,0 +1,7 @@
+flet
+pandas
+tqdm
+tabulate
+openpyxl
+numpy
+scipy
