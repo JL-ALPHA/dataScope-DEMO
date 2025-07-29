@@ -1204,11 +1204,11 @@ async def analysis_handler(e: ft.ControlEvent):
     # If analysis returns tabular data, show it in the data table
     if atype in ["Data Preview", "Missing Values", "Duplicate Detection", "Special Character Analysis", "Placeholder Detection"]:
         if atype == "Data Preview":
-            # Show preview of the data
+            # Show preview of the data (do NOT paginate here)
             preview_df = current_df.head(num) if not desc else current_df.tail(num)
             if col and col != "All Columns":
                 preview_df = preview_df[[col]]
-            update_data_table(preview_df, page)
+            update_data_table(preview_df, page, max_rows=num)
         elif atype == "Missing Values":
             # Show missing values summary as a table
             missing_data = {
@@ -1251,31 +1251,25 @@ async def analysis_handler(e: ft.ControlEvent):
                 update_data_table(placeholder_df, page)
         elif atype == "Special Character Analysis":
             # Show special character analysis as a table with ASCII and Non-ASCII breakdown
-            import pandas as pd
             char_data = []
             for column in current_df.columns:
                 if current_df[column].dtype == 'object':  # Only analyze text columns
                     # Get all text from this column
                     all_text = ' '.join(current_df[column].astype(str).tolist())
-                    
                     # Separate ASCII and Non-ASCII special characters
                     ascii_special = []
                     non_ascii_special = []
-                    
                     for char in set(all_text):
                         if not char.isalnum() and not char.isspace():
                             if ord(char) < 128:  # ASCII range
                                 ascii_special.append(char)
                             else:  # Non-ASCII
                                 non_ascii_special.append(char)
-                    
                     # Count total special characters
                     total_special = len(ascii_special) + len(non_ascii_special)
-                    
                     # Get counts of each character type in the actual data
                     ascii_count = sum(all_text.count(char) for char in ascii_special)
                     non_ascii_count = sum(all_text.count(char) for char in non_ascii_special)
-                    
                     char_data.append({
                         'Column': column,
                         'Total Special Chars': total_special,
@@ -1286,7 +1280,6 @@ async def analysis_handler(e: ft.ControlEvent):
                         'ASCII Frequency': ascii_count,
                         'Non-ASCII Frequency': non_ascii_count
                     })
-            
             if char_data:
                 char_df = pd.DataFrame(char_data)
                 if desc:
@@ -1443,19 +1436,6 @@ def build_advanced_content() -> ft.Column:
 
     advanced_content = ft.Column(
         [
-            ft.Text("Analysis", style="titleMedium"),
-            dialog_controls.get("analysis_dropdown"),
-            dialog_controls.get("desc_text"),
-            dialog_controls.get("column_dropdown"),
-            ft.Row(
-                [
-                    dialog_controls.get("rows_input"),
-                    dialog_controls.get("sort_switch"),
-                ],
-                spacing=20,
-            ),
-            dialog_controls.get("run_btn"),
-            ft.Divider(),
             ft.Text("Load Options", weight=ft.FontWeight.BOLD),
             ft.Row([dialog_controls.get("enc_dropdown"), dialog_controls.get("delim_dropdown")], spacing=10),
             ft.Text("💡 Auto-detection analyzes your files for optimal settings", 
@@ -2066,6 +2046,30 @@ async def transition_to_gui(page: ft.Page):
                     [
                         ft.Text("📊 Data View", style="titleMedium", color=ft.Colors.GREY_800),
                         dialog_controls["data_table_info"],
+                        # --- Analysis Controls (added here) ---
+                        ft.Container(
+                            content=ft.Column(
+                                [
+                                    ft.Text("🧮 Analysis Type", style="titleSmall", weight=ft.FontWeight.BOLD),
+                                    ft.Row(
+                                        [
+                                            dialog_controls.get("analysis_dropdown"),
+                                            dialog_controls.get("column_dropdown"),
+                                            dialog_controls.get("rows_input"),
+                                            dialog_controls.get("sort_switch"),
+                                            dialog_controls.get("run_btn"),
+                                        ],
+                                        spacing=10,
+                                        alignment=ft.MainAxisAlignment.START,
+                                    ),
+                                    dialog_controls.get("desc_text"),
+                                ]
+                            ),
+                            padding=10,
+                            border_radius=8,
+                            margin=ft.margin.only(bottom=10),
+                        ),
+                        # --- End Analysis Controls ---
                         # Search Controls
                         ft.Container(
                             content=ft.Column(
