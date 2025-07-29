@@ -567,20 +567,25 @@ def update_data_table(df, page: ft.Page, max_rows=None, highlight_term=None, hig
         # Data is already paginated
         display_df = df
     
-    # Create columns for the DataTable
-    columns = [ft.DataColumn(ft.Text(col)) for col in display_df.columns]
-    
-    # Create rows for the DataTable with highlighting support
+    # Optionally add a row number column for display
+    show_row_numbers = True  # Set to False if you don't want row numbers
+    col_names = list(display_df.columns)
+    if show_row_numbers:
+        columns = [ft.DataColumn(ft.Text("#"))] + [ft.DataColumn(ft.Text(col)) for col in col_names]
+    else:
+        columns = [ft.DataColumn(ft.Text(col)) for col in col_names]
+
     rows = []
-    for index, row in display_df.iterrows():
+    for idx, row in display_df.iterrows():
         cells = []
-        for col_name, value in row.items():
+        if show_row_numbers:
+            cells.append(ft.DataCell(ft.Text(str(idx + 1))))
+        for col_name in col_names:
+            value = row.get(col_name, "")
             cell_text = str(value)
-            
             # Apply highlighting if search term is provided
             if (highlight_term and highlight_term.lower() in cell_text.lower() and 
                 (highlight_column is None or highlight_column == col_name)):
-                # Determine colors based on theme
                 is_dark_mode = page.theme_mode == ft.ThemeMode.DARK
                 if is_dark_mode:
                     highlight_bg = ft.Colors.AMBER_700
@@ -588,7 +593,6 @@ def update_data_table(df, page: ft.Page, max_rows=None, highlight_term=None, hig
                 else:
                     highlight_bg = ft.Colors.YELLOW_300
                     highlight_text = ft.Colors.BLACK
-                
                 cell_content = ft.Container(
                     content=ft.Text(cell_text, color=highlight_text),
                     bgcolor=highlight_bg,
@@ -598,6 +602,11 @@ def update_data_table(df, page: ft.Page, max_rows=None, highlight_term=None, hig
                 cells.append(ft.DataCell(cell_content))
             else:
                 cells.append(ft.DataCell(ft.Text(cell_text)))
+        # Ensure the number of cells matches the number of columns
+        if len(cells) != len(columns):
+            # Pad with empty cells if needed
+            for _ in range(len(columns) - len(cells)):
+                cells.append(ft.DataCell(ft.Text("")))
         rows.append(ft.DataRow(cells=cells))
     
     # Update the data table
@@ -863,67 +872,80 @@ async def load_data_result(e: ft.FilePickerResultEvent):
 
     if e.files:
         file_path = e.files[0].path
-        save_filepath(file_path)  # ← store the real string path
+        save_filepath(file_path)
         dialog_controls["loaded_file"] = file_path
 
-        # 1. Get dataset name from file
         dataset_name = Path(file_path).stem
-
-        # Indicate busy state
         app_busy = True
-
-        # 2. Create environment folders for this dataset
         project_paths = create_dataset_environment(dataset_name)
-        await write_output(
-            f"[Environment] Folders created at: {project_paths['project']}", page
-        )
-
-        # 3. Show status
+        await write_output(f"[Environment] Folders created at: {project_paths['project']}", page)
         dialog_controls["status_label"].value = "Working..."
         dialog_controls["status_label"].color = ft.Colors.AMBER
         page.update()
         await asyncio.sleep(0.1)
 
         loop = asyncio.get_running_loop()
-
         def progress_cb(p, m):
             asyncio.run_coroutine_threadsafe(update_progress(p, m, page), loop)
 
         await show_progress(True, page)
 
-        result = await asyncio.to_thread(
-            load_data,
-            file_path,
-            progress_cb,
-            dialog_controls.get("encoding", "auto"),
-            dialog_controls.get("delimiter"),
-        )
-        
-        # Handle the new tuple return (df, validation_results)
-        if isinstance(result, tuple):
-            df, validation_results = result
-            current_df = df
-            
-            # Display validation results
-            await display_validation_results(validation_results, page)
-        else:
-            # Backward compatibility - treat as just DataFrame
-            df = result
-            current_df = df
-            validation_results = {}
+        # Fallback encoding/delimiter logic
+        encodings_to_try = [dialog_controls.get("encoding", "auto"), "utf-8", "utf-8-sig", "latin1", "cp1252"]
+        delimiters_to_try = [dialog_controls.get("delimiter"), ",", "\t", ";", "|", None]
+        load_success = False
+        last_exception = None
+        attempt_logs = []
+        df = None
+        validation_results = {}
+        for enc in encodings_to_try:
+            for delim in delimiters_to_try:
+                try:
+                    result = await asyncio.to_thread(
+                        load_data,
+                        file_path,
+                        progress_cb,
+                        enc,
+                        delim,
+                    )
+                    if isinstance(result, tuple):
+                        df, validation_results = result
+                    else:
+                        df = result
+                        validation_results = {}
+                    if df is not None:
+                        attempt_logs.append(f"Success: encoding={enc}, delimiter={repr(delim)}")
+                        load_success = True
+                        break
+                    else:
+                        attempt_logs.append(f"Failed: encoding={enc}, delimiter={repr(delim)} (no data)")
+                except Exception as ex:
+                    attempt_logs.append(f"Exception: encoding={enc}, delimiter={repr(delim)} - {ex}")
+                    last_exception = ex
+            if load_success:
+                break
 
         await show_progress(False, page)
 
-        if df is None:
-            await write_output("[Error] Failed to load dataset.", page)
-            show_error("Failed to load dataset", page)
+        # Log all attempts
+        for log_msg in attempt_logs:
+            await write_output(f"[Loader Attempt] {log_msg}", page)
+
+        if not load_success or df is None:
+            await write_output("[Error] Failed to load dataset after all fallback attempts.", page)
+            if last_exception:
+                show_error(f"Failed to load dataset: {last_exception}", page)
+            else:
+                show_error("Failed to load dataset", page)
             await reset_app_state(page)
             return
 
+        current_df = df
+        if validation_results:
+            await display_validation_results(validation_results, page)
+
         cd = dialog_controls["column_dropdown"]
-        options = [ft.dropdown.Option("All Columns")] + [
-            ft.dropdown.Option(c) for c in current_df.columns
-        ]
+        options = [ft.dropdown.Option("All Columns")] + [ft.dropdown.Option(c) for c in current_df.columns]
         cd.options = options
         cd.value = "All Columns"
         sc = dialog_controls.get("search_column")
@@ -935,14 +957,10 @@ async def load_data_result(e: ft.FilePickerResultEvent):
         info = get_data_stats(df, file_path)
         await write_output(info["log1"], page)
         await write_output(info["log2"], page)
-
-        # Update the data table with loaded data using pagination
         update_data_table(df, page)
-        
         if len(df) > dialog_controls.get("rows_per_page", 25):
             await write_output(f"[Info] Dataset has {len(df)} rows. Using pagination for display.", page)
 
-        # 4. Toggle buttons now that loading succeeded
         data_loaded = True
         dialog_controls["btn_log"].disabled = False
         dialog_controls["btn_data"].disabled = False
@@ -952,13 +970,11 @@ async def load_data_result(e: ft.FilePickerResultEvent):
         dialog_controls["status_label"].color = ft.Colors.GREEN
         dialog_controls["status_label"].weight = ft.FontWeight.BOLD
         app_busy = False
-
     else:
         await write_output("[Load Data] No file selected.", page)
         dialog_controls["status_label"].value = "Ready"
         dialog_controls["status_label"].color = ft.Colors.RED
         app_busy = False
-
     page.update()
 
 
