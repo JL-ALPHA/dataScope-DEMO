@@ -1,0 +1,380 @@
+DATASCOPE UI - DISPLAY CHANGE AND SPECIAL CHARACTERS SELECTION UPDATE
+==============================================================================
+
+Date: July 24, 2025
+File Modified: src/datascope_UI.py
+
+SUMMARY OF CHANGES:
+1. ADDED: Complete Data View tab implementation with DataTable functionality
+2. Modified analysis dropdown behavior to only switch to Data View tab when "Run Analysis" is clicked
+3. Enhanced Special Character Analysis to show ASCII/Non-ASCII breakdown with frequency counts
+4. Improved user workflow for analysis selection and execution
+5. Added automatic tab switching for all analysis and test functions
+6. Implemented theme-aware DataTable styling for light/dark modes
+
+==============================================================================
+
+CHANGE #1: DATA VIEW TAB IMPLEMENTATION
+--------------------------------------
+
+Location: Multiple locations throughout datascope_UI.py
+
+MAJOR ADDITION: Complete Data View tab with DataTable functionality
+
+NEW FUNCTIONS ADDED:
+
+1. focus_dataview_tab() - Line ~157
+   Purpose: Programmatically switch to Data View tab
+   Code:
+   ```python
+   def focus_dataview_tab(page: ft.Page):
+       """Switch to the Data View tab if the tab control exists."""
+       tabs = dialog_controls.get("tabs")
+       if tabs:
+           tabs.selected_index = 1  # Data View tab is at index 1
+           page.update()
+   ```
+
+2. update_data_table() - Line ~162
+   Purpose: Update DataTable with DataFrame content and apply theme styling
+   Features:
+   - Limits rows to 100 for performance (configurable)
+   - Creates DataTable columns and rows from DataFrame
+   - Applies theme-aware styling (light/dark mode support)
+   - Updates row count information
+   - Automatically switches to Data View tab
+   
+   Code Structure:
+   ```python
+   def update_data_table(df, page: ft.Page, max_rows=100):
+       # Create columns and rows from DataFrame
+       columns = [ft.DataColumn(ft.Text(col)) for col in display_df.columns]
+       rows = [ft.DataRow([ft.DataCell(ft.Text(str(value))) for value in row]) 
+               for index, row in display_df.iterrows()]
+       
+       # Apply theme-aware styling
+       if is_dark_mode:
+           data_table.bgcolor = ft.Colors.GREY_900
+           # ... dark theme colors
+       else:
+           data_table.bgcolor = ft.Colors.WHITE
+           # ... light theme colors
+   ```
+
+DATA VIEW TAB STRUCTURE - Line ~1325:
+```python
+ft.Tab(
+    text="Data View",
+    content=ft.Column([
+        ft.Text("📊 Data View", style="titleMedium"),
+        dialog_controls["data_table_info"],  # Row count display
+        ft.Container(
+            content=dialog_controls["data_table"],  # Main DataTable
+            expand=True,
+            padding=10,
+            border_radius=10,
+            # Theme-aware container styling
+        ),
+    ])
+)
+```
+
+DATATABLE CONFIGURATION - Line ~1270:
+```python
+dialog_controls["data_table"] = ft.DataTable(
+    columns=[ft.DataColumn(ft.Text("No Data"))],
+    rows=[],
+    border=ft.border.all(1, ft.Colors.GREY_400),
+    border_radius=10,
+    vertical_lines=ft.BorderSide(1, ft.Colors.GREY_300),
+    horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
+    heading_row_color=ft.Colors.GREY_100,
+    heading_row_height=50,
+    data_row_min_height=30,
+    data_row_max_height=60,
+    show_checkbox_column=False,
+    bgcolor=ft.Colors.WHITE
+)
+```
+
+--------------------------------------------------
+
+CHANGE #2: COMPREHENSIVE FUNCTION INTEGRATION
+---------------------------------------------
+
+Location: Multiple test and analysis functions
+
+ALL FUNCTIONS NOW SHOW DATA IN DATA VIEW TAB:
+
+1. logging_handler_test() - Line ~278
+   - Shows first 5 rows of data as sample
+   - Calls update_data_table(sample_df, page)
+
+2. data_handler_test() - Line ~288
+   - Shows data summary using describe().transpose()
+   - Calls update_data_table(summary_df, page)
+
+3. visual_analyst_test() - Line ~298
+   - Shows column information (data types, null counts)
+   - Creates custom DataFrame with column metadata
+   - Calls update_data_table(info_df, page)
+
+4. load_data_result() - Line ~382
+   - Shows loaded data automatically
+   - Calls update_data_table(df, page)
+
+5. All Analysis Types - Line ~508-780
+   - Data Preview: Shows head/tail of data
+   - Missing Values: Shows missing value statistics table
+   - Duplicate Detection: Shows duplicate rows
+   - Placeholder Detection: Shows placeholder analysis table
+   - Special Character Analysis: Shows enhanced ASCII/Non-ASCII breakdown
+
+6. Search Functions - Line ~810
+   - on_search(): Shows all search results in table
+   - show_search_result(): Shows individual search matches
+
+--------------------------------------------------
+
+CHANGE #3: THEME-AWARE STYLING SYSTEM
+-------------------------------------
+
+Location: Line ~162 (update_data_table) and Line ~960 (on_theme_toggle)
+
+DYNAMIC THEME SWITCHING:
+The DataTable automatically adapts colors based on current theme mode:
+
+DARK MODE COLORS:
+- Table Background: ft.Colors.GREY_900
+- Header Background: ft.Colors.GREY_700
+- Border Colors: ft.Colors.GREY_600
+- Line Colors: ft.Colors.GREY_600
+
+LIGHT MODE COLORS:
+- Table Background: ft.Colors.WHITE
+- Header Background: ft.Colors.GREY_100
+- Border Colors: ft.Colors.GREY_400
+- Line Colors: ft.Colors.GREY_300
+
+THEME TOGGLE ENHANCEMENT - Line ~960:
+Updated on_theme_toggle() to handle DataTable styling:
+```python
+def on_theme_toggle(e: ft.ControlEvent):
+    # ... existing theme logic ...
+    
+    # Update data table colors for the new theme
+    if data_table and data_table.columns and len(data_table.columns) > 1:
+        if dark_mode:
+            # Apply dark theme colors
+        else:
+            # Apply light theme colors
+```
+
+--------------------------------------------------
+
+CHANGE #4: ANALYSIS DROPDOWN BEHAVIOR MODIFICATION
+--------------------------------------------------
+
+Location: Line ~1103 in datascope_UI.py (on_analysis_change function)
+
+BEFORE:
+    def on_analysis_change(e: ft.ControlEvent):
+        focus_dataview_tab(e.page)  # Switch to Data View tab instead of Console
+        desc_text.value = analysis_help.get(e.control.value, "")
+        e.page.update()
+
+AFTER:
+    def on_analysis_change(e: ft.ControlEvent):
+        desc_text.value = analysis_help.get(e.control.value, "")
+        e.page.update()
+
+CHANGE DESCRIPTION:
+- Removed automatic tab switching when selecting analysis type from dropdown
+- Now only shows help text when browsing analysis options
+- Allows users to read descriptions without unwanted tab jumping
+
+--------------------------------------------------
+
+CHANGE #5: RUN ANALYSIS BUTTON BEHAVIOR
+---------------------------------------
+
+Location: Line ~508 in datascope_UI.py (analysis_handler function)
+
+ADDED:
+    # Switch to Data View tab when running analysis
+    focus_dataview_tab(page)
+
+CHANGE DESCRIPTION:
+- Added explicit call to switch to Data View tab when "Run Analysis" button is clicked
+- Ensures users automatically see results in table format after running analysis
+- Positioned after result output but before tabular data processing
+
+--------------------------------------------------
+
+CHANGE #6: ENHANCED SPECIAL CHARACTER ANALYSIS
+----------------------------------------------
+
+Location: Line ~700-780 in datascope_UI.py (Special Character Analysis section in analysis_handler)
+
+MAJOR ENHANCEMENT:
+The Special Character Analysis was completely rewritten to provide detailed breakdown:
+
+NEW FEATURES ADDED:
+1. Separation of ASCII vs Non-ASCII special characters
+2. Character type counting and frequency analysis
+3. Sample character display with truncation
+4. Improved data table display with multiple columns
+
+NEW COLUMNS IN DATA TABLE:
+- Column: Name of the analyzed column
+- Total Special Chars: Total unique special characters found
+- ASCII Special Count: Count of ASCII special characters (ord < 128)
+- Non-ASCII Count: Count of non-ASCII special characters (ord >= 128)
+- ASCII Characters: Sample of ASCII special characters found (first 15)
+- Non-ASCII Characters: Sample of non-ASCII characters found (first 10)
+- ASCII Frequency: Total occurrences of ASCII special characters in data
+- Non-ASCII Frequency: Total occurrences of non-ASCII characters in data
+
+CODE STRUCTURE:
+```python
+# Separate ASCII and Non-ASCII special characters
+ascii_special = []
+non_ascii_special = []
+
+for char in set(all_text):
+    if not char.isalnum() and not char.isspace():
+        if ord(char) < 128:  # ASCII range
+            ascii_special.append(char)
+        else:  # Non-ASCII
+            non_ascii_special.append(char)
+
+# Count total special characters
+total_special = len(ascii_special) + len(non_ascii_special)
+
+# Get counts of each character type in the actual data
+ascii_count = sum(all_text.count(char) for char in ascii_special)
+non_ascii_count = sum(all_text.count(char) for char in non_ascii_special)
+```
+
+--------------------------------------------------
+
+CHANGE #7: HELP TEXT UPDATE
+---------------------------
+
+Location: Line ~1079 in datascope_UI.py (analysis_help dictionary)
+
+UPDATED:
+"Special Character Analysis": "Analyze ASCII and Non-ASCII special characters with frequencies."
+
+CHANGE DESCRIPTION:
+- Updated help text to reflect the enhanced capabilities
+- Now mentions both ASCII/Non-ASCII analysis and frequency counting
+
+==============================================================================
+
+COMPREHENSIVE DATA VIEW TAB IMPLEMENTATION DETAILS:
+--------------------------------------------------
+
+USER INTERFACE STRUCTURE:
+The Data View tab was added as the second tab (index 1) in the application:
+1. Console Tab (index 0) - Original text output
+2. Data View Tab (index 1) - NEW tabular data display
+3. Data Tools Tab (index 2) - File operations
+4. Advanced Tools Tab (index 3) - Analysis and search
+5. Settings Tab (index 4) - Theme and preferences
+
+DATA FLOW ARCHITECTURE:
+1. User loads data → update_data_table() called → Data View tab shows loaded data
+2. User runs test functions → update_data_table() called → Shows relevant data analysis
+3. User runs analysis → focus_dataview_tab() called → Shows analysis results in table format
+4. User searches data → update_data_table() called → Shows search results
+5. Theme changes → DataTable styling automatically updates
+
+PERFORMANCE OPTIMIZATIONS:
+- DataTable limited to 100 rows by default (configurable via max_rows parameter)
+- Row count display shows "Showing X of Y rows" for user awareness
+- Efficient DataFrame to DataTable conversion using list comprehensions
+- Theme styling applied only when data is present
+
+TECHNICAL BENEFITS:
+- Unified data viewing experience across all functions
+- Automatic tab switching eliminates manual navigation
+- Theme-aware styling ensures readability in both light and dark modes
+- Scrollable container handles large datasets
+- Real-time updates when data changes
+
+==============================================================================
+
+USER WORKFLOW IMPROVEMENTS:
+1. **Unified Data Experience**: All functions now provide both console output and tabular display
+2. **Automatic Tab Management**: Users don't need to manually switch tabs to see results
+3. **Enhanced Analysis**: Special Character Analysis provides detailed ASCII/Non-ASCII breakdown
+4. **Intuitive Navigation**: Browse analysis types without unwanted tab switching
+5. **Theme Consistency**: DataTable adapts to user's preferred light/dark theme
+6. **Performance Optimized**: Large datasets handled efficiently with row limiting
+7. **Real-time Updates**: Data table refreshes automatically when new data is loaded or analyzed
+
+TECHNICAL BENEFITS:
+- Better user experience with predictable tab behavior
+- More informative special character analysis for data cleaning
+- Maintains console output while providing rich tabular display
+- Supports both light and dark theme modes for data table visibility
+- Comprehensive integration across all application functions
+- Scalable architecture for future data visualization enhancements
+
+==============================================================================
+
+CONTROL REFERENCES ADDED:
+- "data_table": Main DataTable widget for displaying tabular data
+- "data_table_info": Text widget showing row count information
+- "btn_dataview": Manual button to switch to Data View tab
+
+NEW DIALOG CONTROLS INTEGRATION:
+All existing functions now leverage the Data View tab through update_data_table():
+- File loading operations
+- Test function outputs  
+- Analysis results
+- Search results
+- Data previews
+
+==============================================================================
+
+FILES AFFECTED:
+- src/datascope_UI.py (primary changes)
+
+TESTING RECOMMENDATIONS:
+1. **Data View Tab Functionality**: 
+   - Load data and verify automatic switch to Data View tab
+   - Check DataTable displays data correctly with proper column headers
+   - Verify row count information shows "Showing X of Y rows"
+
+2. **Analysis Dropdown Behavior**: 
+   - Select analysis types and verify only help text appears (no tab switching)
+   - Click "Run Analysis" and verify automatic switch to Data View tab
+
+3. **Special Character Analysis**: 
+   - Test with data containing international characters (é, ñ, ™, etc.)
+   - Verify ASCII/Non-ASCII separation and frequency counts
+   - Check sample character display truncation (15 ASCII, 10 Non-ASCII)
+
+4. **Theme Compatibility**: 
+   - Toggle between light/dark modes
+   - Verify DataTable colors adapt properly
+   - Check table readability in both themes
+   - Ensure border and line colors are visible
+
+5. **Function Integration**: 
+   - Test all test buttons (Test Logging, Test Data Handling, Test Visual Analyst)
+   - Verify each shows appropriate data in Data View tab
+   - Test search functionality with tabular results display
+
+6. **Performance Testing**:
+   - Load large datasets (>100 rows) and verify only 100 rows display
+   - Check responsiveness of tab switching
+   - Verify memory usage with large DataTable operations
+
+7. **Manual Data View Access**:
+   - Test "View Data Table" button functionality
+   - Verify manual tab switching works correctly
+
+==============================================================================
