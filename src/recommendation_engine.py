@@ -20,6 +20,14 @@ class Recommendation:
     priority: int  # 1=high, 2=medium, 3=low
     category: str  # 'quality', 'workflow', 'performance', 'insight'
     icon: str = "💡"
+    explanation: str = ""  # Why this recommendation is made
+    interactive: bool = True  # Can be clicked to trigger action
+    urgency: str = "normal"  # 'critical', 'high', 'normal', 'low'
+    parameters: Dict[str, Any] = None  # Optional parameters for the action
+    
+    def __post_init__(self):
+        if self.parameters is None:
+            self.parameters = {}
     
     def __str__(self):
         return f"[{self.icon}] {self.title}: {self.message} → {self.action}"
@@ -34,6 +42,36 @@ class RecommendationEngine:
     def __init__(self):
         self.user_actions = []
         self.dataset_cache = {}
+        self.current_context = {
+            'last_analysis': None,
+            'data_characteristics': {},
+            'user_preferences': {},
+            'workflow_stage': 'initial'
+        }
+        self.dismissed_recommendations = set()
+        
+    def update_context(self, analysis_type: str, data_stats: Dict[str, Any] = None):
+        """Update the current context based on user actions."""
+        self.current_context['last_analysis'] = analysis_type
+        self.current_context['workflow_stage'] = self._determine_workflow_stage(analysis_type)
+        
+        if data_stats:
+            self.current_context['data_characteristics'].update(data_stats)
+    
+    def _determine_workflow_stage(self, analysis_type: str) -> str:
+        """Determine what stage of the workflow the user is in."""
+        stage_mapping = {
+            "Data Preview": "exploration",
+            "Missing Values": "quality_assessment", 
+            "Duplicate Detection": "quality_assessment",
+            "Placeholder Detection": "quality_assessment",
+            "Special Character Analysis": "quality_assessment"
+        }
+        return stage_mapping.get(analysis_type, "analysis")
+        
+    def dismiss_recommendation(self, rec_id: str):
+        """Mark a recommendation as dismissed by the user."""
+        self.dismissed_recommendations.add(rec_id)
         
     def analyze_dataset(self, df: pd.DataFrame, filename: str) -> List[Recommendation]:
         """
@@ -107,66 +145,191 @@ class RecommendationEngine:
         
         return recommendations
     
-    def get_contextual_recommendations(self, last_analysis: str) -> List[Recommendation]:
+    def get_contextual_recommendations(self, last_analysis: str, data_df=None) -> List[Recommendation]:
         """
-        Get recommendations based on the last analysis performed.
+        Get enhanced context-aware recommendations based on the last analysis and current data state.
         
         Parameters
         ----------
         last_analysis : str
             The type of analysis just completed
+        data_df : pd.DataFrame, optional
+            Current dataset for additional context
             
         Returns
         -------
         List[Recommendation]
-            Context-aware follow-up recommendations
+            Context-aware follow-up recommendations with interactive capabilities
         """
         recommendations = []
         
-        context_map = {
-            "Data Preview": [
+        # Update context
+        if data_df is not None:
+            data_stats = self._get_quick_data_stats(data_df)
+            self.update_context(last_analysis, data_stats)
+        
+        # Enhanced context-aware recommendations
+        if last_analysis == "Data Preview":
+            recommendations.extend([
                 Recommendation(
-                    title="Next: Check Data Quality",
-                    message="Now that you've seen the data structure, check for missing values.",
+                    title="🔍 Check Data Quality",
+                    message="Start with missing values analysis to understand data completeness",
                     action="Missing Values",
-                    priority=2,
+                    priority=1,
                     category="workflow",
-                    icon="🔍"
-                )
-            ],
-            "Missing Values": [
+                    icon="🔍",
+                    explanation="Missing values can significantly impact analysis results. It's best to identify them early.",
+                    urgency="high",
+                    interactive=True
+                ),
                 Recommendation(
-                    title="Check for Duplicates",
-                    message="After handling missing data, look for duplicate records.",
-                    action="Duplicate Detection",
+                    title="📊 Get Dataset Summary",
+                    message="View statistical summary and data types",
+                    action="Data Preview",
                     priority=2,
-                    category="quality",
-                    icon="🔄"
+                    category="insight",
+                    icon="�",
+                    explanation="Understanding basic statistics helps identify patterns and outliers.",
+                    parameters={"rows": "1000"}
                 )
-            ],
-            "Duplicate Detection": [
+            ])
+            
+        elif last_analysis == "Missing Values":
+            recs = [
                 Recommendation(
-                    title="Analyze Text Quality",
-                    message="Check for special characters and encoding issues in text fields.",
+                    title="🔄 Find Duplicates",
+                    message="Check for duplicate records that might affect analysis",
+                    action="Duplicate Detection", 
+                    priority=1,
+                    category="quality",
+                    icon="🔄",
+                    explanation="Duplicates can skew results and should be identified after handling missing data.",
+                    urgency="high"
+                )
+            ]
+            
+            # Add data-specific recommendations if we have context
+            if data_df is not None:
+                missing_pct = (data_df.isnull().sum().sum() / (len(data_df) * len(data_df.columns))) * 100
+                if missing_pct > 20:
+                    recs.append(Recommendation(
+                        title="⚠️ High Missing Data Alert",
+                        message="Consider data imputation or removal strategies",
+                        action="Missing Values",
+                        priority=1,
+                        category="quality",
+                        icon="⚠️",
+                        explanation=f"Your dataset has {missing_pct:.1f}% missing values, which is quite high.",
+                        urgency="critical",
+                        parameters={"focus": "strategy"}
+                    ))
+            
+            recommendations.extend(recs)
+            
+        elif last_analysis == "Duplicate Detection":
+            recommendations.extend([
+                Recommendation(
+                    title="🔤 Check Text Quality",
+                    message="Analyze special characters and encoding issues",
                     action="Special Character Analysis",
                     priority=2,
                     category="quality",
-                    icon="📝"
-                )
-            ],
-            "Special Character Analysis": [
+                    icon="�",
+                    explanation="Text data often contains encoding issues or unwanted characters.",
+                    urgency="normal"
+                ),
                 Recommendation(
-                    title="Detect Placeholders",
-                    message="Look for placeholder values like 'N/A', 'TBD', etc.",
+                    title="🎯 Look for Placeholders",
+                    message="Find placeholder values like 'N/A', 'Unknown', etc.",
                     action="Placeholder Detection",
                     priority=2,
-                    category="quality",
-                    icon="🏷️"
+                    category="quality", 
+                    icon="🎯",
+                    explanation="Placeholder values are often missed by standard null detection."
+                )
+            ])
+            
+        elif last_analysis == "Special Character Analysis":
+            recommendations.extend([
+                Recommendation(
+                    title="🎯 Detect Placeholders",
+                    message="Complete data quality check with placeholder detection",
+                    action="Placeholder Detection",
+                    priority=2,
+                    category="workflow",
+                    icon="🎯",
+                    explanation="This completes the comprehensive data quality assessment."
+                )
+            ])
+            
+        elif last_analysis == "Placeholder Detection":
+            recommendations.extend([
+                Recommendation(
+                    title="✅ Quality Check Complete",
+                    message="Your data quality assessment is complete! Ready for analysis.",
+                    action="Data Preview",
+                    priority=3,
+                    category="workflow",
+                    icon="✅",
+                    explanation="You've completed a thorough data quality check.",
+                    parameters={"rows": "all"}
+                )
+            ])
+        
+        # Add workflow-stage specific recommendations
+        workflow_recs = self._get_workflow_recommendations()
+        recommendations.extend(workflow_recs)
+        
+        # Filter out dismissed recommendations
+        recommendations = [r for r in recommendations if f"{r.action}_{r.title}" not in self.dismissed_recommendations]
+        
+        # Sort by priority and urgency
+        urgency_order = {'critical': 0, 'high': 1, 'normal': 2, 'low': 3}
+        recommendations.sort(key=lambda x: (urgency_order.get(x.urgency, 2), x.priority))
+        
+        return recommendations[:5]  # Limit to top 5 to avoid overwhelming users
+    
+    def _get_quick_data_stats(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Get quick statistics about the dataset for context."""
+        return {
+            'rows': len(df),
+            'columns': len(df.columns),
+            'missing_percentage': (df.isnull().sum().sum() / (len(df) * len(df.columns))) * 100,
+            'has_text_columns': df.select_dtypes(include=['object']).shape[1] > 0,
+            'has_numeric_columns': df.select_dtypes(include=['number']).shape[1] > 0
+        }
+    
+    def _get_workflow_recommendations(self) -> List[Recommendation]:
+        """Get recommendations based on current workflow stage."""
+        stage = self.current_context.get('workflow_stage', 'initial')
+        
+        if stage == 'exploration':
+            return [
+                Recommendation(
+                    title="🚀 Quick Start",
+                    message="Run a comprehensive data quality check",
+                    action="Missing Values",
+                    priority=3,
+                    category="workflow",
+                    icon="🚀",
+                    explanation="A good starting point for any dataset analysis."
                 )
             ]
-        }
+        elif stage == 'quality_assessment':
+            return [
+                Recommendation(
+                    title="📈 Ready for Analysis",
+                    message="Data quality checks complete - explore patterns",
+                    action="Data Preview",
+                    priority=3,
+                    category="insight",
+                    icon="📈",
+                    explanation="Your data is now ready for deeper analysis.",
+                    parameters={"rows": "all", "focus": "patterns"}
+                )
+            ]
         
-        return context_map.get(last_analysis, [])
+        return []
     
     def log_user_action(self, action: str):
         """Log a user action for learning user behavior patterns."""

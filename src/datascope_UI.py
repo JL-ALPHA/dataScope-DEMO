@@ -704,7 +704,8 @@ def open_data_folder(e):
         except Exception as ex:
             show_error(f"Could not open folder: {str(ex)}", e.page)
     else:
-        show_error("No data folder found. Load data first.", e.page)
+        show_error("❌ No data folder found. Load data first.", e.page)
+        show_error("💡 Try this instead: Click 'Load Data' button to import a file first", e.page)
 
 
 def open_chunk_folder(e):
@@ -719,7 +720,8 @@ def open_chunk_folder(e):
         except Exception as ex:
             show_error(f"Could not open chunks folder: {str(ex)}", e.page)
     else:
-        show_error("No chunks folder found. Chunk a CSV file first.", e.page)
+        show_error("❌ No chunks folder found. Chunk a CSV file first.", e.page)
+        show_error("💡 Try this instead: Load a CSV file and select 'Chunk Large CSV' to create chunks first", e.page)
 
 
 def set_custom_data_root(e):
@@ -2073,13 +2075,17 @@ async def analysis_handler(e: ft.ControlEvent):
     
     print(f"[DEBUG] analysis_handler called: data_loaded={data_loaded}")
 
-    # Enhanced data validation
+    # Enhanced data validation with helpful suggestions
     if not data_loaded:
-        await write_output("[Error] ⚠️ Load data first before running analysis.", page)
+        await write_output("❌ [Error] Load data first before running analysis.", page)
+        await write_output("💡 Try this instead: Click the 'Load Data' button to import your CSV, Excel, or TXT file", page)
+        await write_output("📁 Supported formats: .csv, .xlsx, .xls, .txt (tab-separated)", page)
         return
 
     if current_df is None or current_df.empty:
-        await write_output("[Error] ⚠️ No valid data loaded. Please load a dataset first.", page)
+        await write_output("❌ [Error] No valid data loaded. Please load a dataset first.", page)
+        await write_output("💡 Try this instead: Use 'Load Data' button and select a file with actual data", page)
+        await write_output("🔍 Make sure your file isn't empty and has proper headers", page)
         return
 
     # Add debouncing for regular analysis button clicks
@@ -2120,14 +2126,19 @@ async def analysis_handler(e: ft.ControlEvent):
     atype = ad.value
     col = cd.value if cd.value != "All Columns" else None
 
-    # Validate analysis type
+    # Validate analysis type with suggestions
     if not atype:
-        await write_output("[Error] ⚠️ Please select an analysis type.", page)
+        await write_output("❌ [Error] Please select an analysis type.", page)
+        await write_output("💡 Try this instead: Use the 'Analysis Type' dropdown to choose what you want to analyze", page)
+        await write_output("📋 Recommended for beginners: Start with 'Data Preview' to see your data structure", page)
         return
 
-    # Validate column selection for single-column analyses
+    # Validate column selection for single-column analyses with helpful guidance
     if col and col not in current_df.columns:
-        await write_output(f"[Error] ⚠️ Column '{col}' not found in dataset. Available columns: {list(current_df.columns)[:5]}...", page)
+        available_cols = list(current_df.columns)[:5]  # Show first 5 columns
+        await write_output(f"❌ [Error] Column '{col}' not found in dataset.", page)
+        await write_output(f"💡 Try this instead: Choose from available columns: {available_cols}{'...' if len(current_df.columns) > 5 else ''}", page)
+        await write_output("🔍 Tip: Use 'All Columns' to analyze the entire dataset", page)
         return
 
     try:
@@ -2155,15 +2166,17 @@ async def analysis_handler(e: ft.ControlEvent):
             
         print(f"[DEBUG] Analysis handler: Final parsed num = {num}")
         
-        # Validation for normal row counts (skip validation for "Show All")
+        # Validation for normal row counts (skip validation for "Show All") with helpful suggestions
         if num != -1:
             if num <= 0:
-                await write_output("[Error] Number of rows must be a positive integer (1 or greater).", page)
-                await write_output("💡 Try: 10, 100, 500, 1000, or use 'Show All'", page)
+                await write_output("❌ [Error] Number of rows must be a positive integer (1 or greater).", page)
+                await write_output("💡 Try this instead: Enter a positive number like 10, 100, 500, or 1000", page)
+                await write_output("🎯 Quick fix: Use the preset buttons below the input field (10, 100, 500, 1K, 5K, All)", page)
                 return
             if num > 1000000:  # 1 million row limit for safety
-                await write_output("[Error] Maximum 1,000,000 rows allowed for performance reasons.", page)
-                await write_output("💡 For very large datasets, use 'Show All' or consider using filters", page)
+                await write_output("❌ [Error] Maximum 1,000,000 rows allowed for performance reasons.", page)
+                await write_output("💡 Try this instead: Use a smaller number like 10000 or 50000 for large datasets", page)
+                await write_output("🚀 Alternative: Use 'Show All' button for complete dataset analysis (may be slow)", page)
                 return
             
             # Smart validation warnings
@@ -2177,8 +2190,10 @@ async def analysis_handler(e: ft.ControlEvent):
             
     except ValueError as ve:
         print(f"[DEBUG] Analysis handler: Failed to parse rows_input value = '{field_value}', error: {ve}")
-        await write_output("[Error] Rows must be a valid number (e.g., 10, 100, 1000).", page)
-        await write_output("💡 Use the preset buttons for common values: 10, 100, 500, 1K, 5K, All", page)
+        await write_output("❌ [Error] Rows must be a valid number (e.g., 10, 100, 1000).", page)
+        await write_output("💡 Try this instead: Enter a whole number like 50, 100, or 500", page)
+        await write_output("🎯 Quick fix: Use the preset buttons for common values: 10, 100, 500, 1K, 5K, All", page)
+        await write_output("📝 Or type 'Show All' to display the entire dataset", page)
         return
 
     desc = ss.value
@@ -2264,19 +2279,25 @@ async def analysis_handler(e: ft.ControlEvent):
     else:
         await write_output(f"[Error] ❌ Unknown analysis type: '{atype}' | Available: {list(analysis_functions.keys())}", page)
     
-    # Get contextual recommendations after analysis with error handling
+    # Get enhanced contextual recommendations after analysis with error handling
     try:
-        contextual_recs = recommendation_engine.get_contextual_recommendations(atype)
+        # Pass current data for better context awareness
+        contextual_recs = recommendation_engine.get_contextual_recommendations(atype, current_df)
         if contextual_recs:
             rec_text = recommendation_engine.format_recommendations_for_ui(contextual_recs)
             await write_output("\n" + rec_text, page)
             
-            # Update recommendations panel if it exists
+            # Update recommendations panel if it exists with interactive features
             rec_content = dialog_controls.get("recommendations_content")
             if rec_content:
                 update_recommendations_panel(contextual_recs, rec_content, page, data_loaded, current_df, trigger_recommended_analysis_sync)
+                print(f"[Recommendations] Updated panel with {len(contextual_recs)} context-aware recommendations")
+        else:
+            print(f"[Recommendations] No contextual recommendations for {atype}")
     except Exception as e:
         print(f"[DEBUG] Contextual recommendation generation failed: {e}")
+        import traceback
+        traceback.print_exc()
         # Don't let recommendation failures break the main analysis flow
     
     app_busy = False
@@ -2300,7 +2321,8 @@ async def show_search_result(page: ft.Page):
 async def on_search(e: ft.ControlEvent):
     """Execute a DataFrame search based on UI selections."""
     if current_df is None:
-        show_error("Load data before searching", e.page)
+        show_error("❌ Load data before searching", e.page)
+        show_error("💡 Try this instead: Click 'Load Data' to import a file first", e.page)
         return
 
     term = dialog_controls["search_term"].value
@@ -2395,7 +2417,8 @@ def export_dataset(e: ft.ControlEvent):
 
 def export_search_results(e: ft.ControlEvent):
     if not dialog_controls.get("search_results"):
-        show_error("Run a search first", e.page)
+        show_error("❌ Run a search first", e.page)
+        show_error("💡 Try this instead: Use the search box above to find data, then try exporting", e.page)
         return
     global export_context
     export_context = "search"
@@ -2404,7 +2427,8 @@ def export_search_results(e: ft.ControlEvent):
 
 def export_analysis_text(e: ft.ControlEvent):
     if not dialog_controls.get("analysis_text"):
-        show_error("Run analysis first", e.page)
+        show_error("❌ Run analysis first", e.page)
+        show_error("💡 Try this instead: Select analysis type and click 'Analyze' to generate results first", e.page)
         return
     global export_context
     export_context = "analysis"
@@ -2653,6 +2677,29 @@ async def transition_to_gui(page: ft.Page):
     dialog_controls["logo_image"] = logo_ref
 
     # 3) Console & File‑ops UI (must come before Tabs)
+    welcome_message = """🎉 Welcome to Protexxa DataScope v1.2! 
+
+📋 QUICK START GUIDE:
+1. Click "Load Data" to import your CSV, Excel, or TXT file
+2. Choose an analysis type from the dropdown (Data Preview is great to start!)
+3. Click "Run Analysis" to get insights about your data
+4. Use the "Data View" tab to see results in multiple formats
+5. Check the "Recommendations" panel for suggested next steps
+
+💡 TIPS FOR BEGINNERS:
+• Start with "Data Preview" to see your data structure
+• Use "Missing Values" to check data quality
+• Try the quick preset buttons (10, 100, 500 rows) for faster analysis
+• Switch between themes using the "Settings" tab
+
+❓ NEED HELP?
+• Hover over any button or dropdown for helpful tooltips
+• Error messages include "Try this instead" suggestions
+• Each analysis type shows a description when selected
+
+Ready to explore your data? Click "Load Data" to begin! ✨
+"""
+    
     dialog_controls["output_text_field"] = ft.TextField(
         multiline=True,
         read_only=True,
@@ -2663,7 +2710,8 @@ async def transition_to_gui(page: ft.Page):
         border_radius=20,
         border_color=ft.Colors.BLUE_GREY_200,
         content_padding=10,
-        value="",
+        value=welcome_message,
+        tooltip="Console output - shows analysis results, progress updates, and helpful messages"
     )
     dialog_controls["progress_bar"] = ft.ProgressBar(
         width=700,
@@ -2672,6 +2720,7 @@ async def transition_to_gui(page: ft.Page):
         color=ft.Colors.BLUE,
         value=0,
         visible=False,
+        tooltip="Shows progress for data loading and processing operations"
     )
     dialog_controls["progress_text"] = ft.Text(
         value="",
@@ -2680,31 +2729,36 @@ async def transition_to_gui(page: ft.Page):
         text_align=ft.TextAlign.CENTER,
         visible=False,
         weight=ft.FontWeight.BOLD,
+        tooltip="Displays current operation status and progress percentage"
     )
 
-    # load / test buttons
+    # load / test buttons with enhanced tooltips
     btn_load = ft.ElevatedButton(
         text="Load Data",
         on_click=load_data_handler,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+        tooltip="📁 Load CSV, Excel, or TXT files for analysis\n• Supports auto-detection of encoding and delimiters\n• Shows file size warnings for large datasets\n• Creates backup and validation reports"
     )
     dialog_controls["btn_log"] = ft.ElevatedButton(
         text="Test Logging",
         on_click=logging_handler_test,
         disabled=True,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+        tooltip="🔍 Test the logging system functionality\n• Validates log file creation\n• Checks error handling\n• Available after loading data"
     )
     dialog_controls["btn_data"] = ft.ElevatedButton(
         text="Test Data Handling",
         on_click=data_handler_test,
         disabled=True,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+        tooltip="⚙️ Test data processing capabilities\n• Validates data integrity\n• Checks memory usage\n• Tests performance metrics\n• Available after loading data"
     )
     dialog_controls["btn_visual"] = ft.ElevatedButton(
         text="Test Visual Analyst",
         on_click=visual_analyst_test,
         disabled=True,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+        tooltip="📊 Test data visualization features\n• Generates sample charts\n• Tests visualization engine\n• Validates chart exports\n• Available after loading data"
     )
     
     # Add a button to manually switch to Data View for testing
@@ -2713,6 +2767,7 @@ async def transition_to_gui(page: ft.Page):
         on_click=lambda e: focus_dataview_tab(e.page),
         disabled=True,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=15)),
+        tooltip="📋 Switch to Data View tab to see analysis results\n• Shows data in table, text, and syntax-highlighted formats\n• Includes pagination and search features\n• Available after loading data"
     )
     dialog_controls["btn_dataview"] = btn_dataview
     
@@ -2740,16 +2795,22 @@ async def transition_to_gui(page: ft.Page):
 
     dialog_controls["status_label"] = ft.Text("Ready", color=ft.Colors.BLUE)
 
-    # 4) Advanced Tab Widgets (SEAN FEATURE BUILDOUT)
+    # 4) Advanced Tab Widgets (SEAN FEATURE BUILDOUT) - Enhanced with detailed help
     analysis_help = {
-        "Data Preview": "Show sample rows and types.",
-        "Missing Values": "Report null counts.",
-        "Duplicate Detection": "Advanced duplicate analysis with statistics and insights.",
-        "Placeholder Detection": "Check for placeholder tokens.",
-        "Special Character Analysis": "Analyze ASCII and Non-ASCII special characters with frequencies.",
+        "Data Preview": "📋 Show sample rows and data types.\n💡 What does this do? Displays the first N rows of your dataset so you can see the structure, column names, and data types. Perfect for getting familiar with your data!",
+        "Missing Values": "🔍 Report null/empty value counts by column.\n💡 What does this do? Scans every column to find missing data (blanks, NaN, null values). Shows which columns need attention for data quality.",
+        "Duplicate Detection": "🔄 Advanced duplicate analysis with statistics and insights.\n💡 What does this do? Finds duplicate values within each column and provides detailed statistics. Helps identify data quality issues and potential data entry errors.",
+        "Placeholder Detection": "🏷️ Check for placeholder tokens and dummy data.\n💡 What does this do? Searches for common placeholder values like 'N/A', 'TBD', 'TODO', '-', etc. Helps identify incomplete or temporary data entries.",
+        "Special Character Analysis": "🔤 Analyze ASCII and Non-ASCII special characters with frequencies.\n💡 What does this do? Examines text columns for special characters, symbols, and non-standard text. Useful for data cleaning and encoding issues.",
     }
 
-    desc_text = ft.Text(value=analysis_help.get("Data Preview", ""), size=12, color=ft.Colors.BLUE_GREY_600)
+    desc_text = ft.Text(
+        value=analysis_help.get("Data Preview", ""), 
+        size=12, 
+        color=ft.Colors.BLUE_GREY_600,
+        selectable=True,
+        tooltip="Click to select this help text - it updates when you change analysis types"
+    )
     dialog_controls["desc_text"] = desc_text
 
     def on_analysis_change(e: ft.ControlEvent):
@@ -2768,10 +2829,14 @@ async def transition_to_gui(page: ft.Page):
             ft.dropdown.Option("Special Character Analysis"),
         ],
         on_change=on_analysis_change,
-        tooltip="Choose analysis to run",
+        tooltip="🎯 Choose what type of analysis to run on your data\n• Each analysis provides different insights\n• Descriptions update when you change selections\n• Start with 'Data Preview' if you're new to your dataset",
     )
     column_dropdown = ft.Dropdown(
-        label="Column", width=200, value="All Columns", options=[ft.dropdown.Option("All Columns")]
+        label="Column", 
+        width=200, 
+        value="All Columns", 
+        options=[ft.dropdown.Option("All Columns")],
+        tooltip="📊 Select specific column to analyze\n• 'All Columns': Analyze the entire dataset\n• Specific column: Focus analysis on one column\n• Options populate after loading data"
     )
     
     # Quick preset buttons for common row counts - Enhanced approach
@@ -2831,7 +2896,7 @@ async def transition_to_gui(page: ft.Page):
         value="50", 
         width=150, 
         hint_text="Enter number or 'Show All'",
-        tooltip="Enter the number of rows to display (e.g., 100, 1000) or type 'Show All' to display all rows without pagination",
+        tooltip="📝 How many rows to display in the analysis\n• Enter any number (e.g., 10, 100, 1000)\n• Type 'Show All' to display entire dataset\n• Use preset buttons below for common values\n• Larger numbers may take longer to process",
         suffix_text="rows",
         on_change=on_rows_input_change,  # Triggers on every keystroke/change
         on_submit=on_rows_input_change,  # Triggers when Enter is pressed
@@ -2887,21 +2952,21 @@ async def transition_to_gui(page: ft.Page):
     dialog_controls["current_row_count"] = current_row_count
     
     preset_buttons = ft.Row([
-        ft.TextButton("10", on_click=set_rows_preset(10), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))),
-        ft.TextButton("100", on_click=set_rows_preset(100), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))),
-        ft.TextButton("500", on_click=set_rows_preset(500), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))),
-        ft.TextButton("1K", on_click=set_rows_preset(1000), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))),
-        ft.TextButton("5K", on_click=set_rows_preset(5000), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8))),
-        ft.TextButton("Show All", on_click=set_rows_preset(-1), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), color=ft.Colors.GREEN))
+        ft.TextButton("10", on_click=set_rows_preset(10), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)), tooltip="📊 Quick view - Show 10 rows\n• Perfect for initial data exploration\n• Fast loading time\n• Good for checking data structure"),
+        ft.TextButton("100", on_click=set_rows_preset(100), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)), tooltip="📋 Standard view - Show 100 rows\n• Most common analysis size\n• Good balance of detail and speed\n• Recommended for most analyses"),
+        ft.TextButton("500", on_click=set_rows_preset(500), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)), tooltip="📈 Detailed view - Show 500 rows\n• More comprehensive analysis\n• Good for pattern detection\n• May take a moment to load"),
+        ft.TextButton("1K", on_click=set_rows_preset(1000), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)), tooltip="🔍 Large view - Show 1,000 rows\n• Thorough analysis\n• Good for statistical reliability\n• Processing time may increase"),
+        ft.TextButton("5K", on_click=set_rows_preset(5000), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)), tooltip="🚀 Extended view - Show 5,000 rows\n• Comprehensive analysis\n• Good for large dataset insights\n• Longer processing time expected"),
+        ft.TextButton("Show All", on_click=set_rows_preset(-1), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), color=ft.Colors.GREEN), tooltip="🌟 Complete view - Show ALL rows\n• Analyzes entire dataset\n• No row limits applied\n• May take significant time for large files\n• Best for complete data assessment")
     ], spacing=5)
     
     rows_container = ft.Column([
         rows_input,
-        ft.Text("Quick presets:", size=10, color=ft.Colors.BLUE_GREY_600),
+        ft.Text("Quick presets:", size=10, color=ft.Colors.BLUE_GREY_600, tooltip="Click any preset button to instantly set the number of rows to analyze"),
         preset_buttons
     ], spacing=5)
-    sort_switch = ft.Switch(label="Descending order", value=False)
-    run_btn = ft.ElevatedButton("Run Analysis", on_click=analysis_handler)
+    sort_switch = ft.Switch(label="Descending order", value=False, tooltip="⬇️ Sort results in descending order\n• ON: Shows largest/newest values first\n• OFF: Shows smallest/oldest values first\n• Applies to Data Preview analysis")
+    run_btn = ft.ElevatedButton("Run Analysis", on_click=analysis_handler, tooltip="▶️ Execute the selected analysis\n• Processes your data based on current settings\n• Results appear in Data View tab\n• Check console for progress updates\n• Switch to Data View automatically when done")
 
     # stash for the handler
     dialog_controls["analysis_dropdown"] = analysis_dropdown
@@ -2909,7 +2974,7 @@ async def transition_to_gui(page: ft.Page):
     dialog_controls["rows_input"] = rows_input
     dialog_controls["sort_switch"] = sort_switch
     dialog_controls["run_btn"] = run_btn
-    dialog_controls["match_label"] = ft.Text("0/0")
+    dialog_controls["match_label"] = ft.Text("0/0", tooltip="Shows current search match position (e.g., '3 of 15 matches')")
 
     enc_dropdown = ft.Dropdown(
         label="Encoding",
@@ -2923,7 +2988,7 @@ async def transition_to_gui(page: ft.Page):
             ft.dropdown.Option("cp1252"),
         ],
         on_change=lambda e: dialog_controls.__setitem__("encoding", e.control.value),
-        tooltip="File encoding (Auto-Detect recommended)",
+        tooltip="🔤 File text encoding\n• Auto-Detect: Automatically determines encoding (recommended)\n• UTF-8: Standard for most modern files\n• Latin1: Common for older files\n• Use Auto-Detect unless you have encoding issues",
     )
     dialog_controls["enc_dropdown"] = enc_dropdown
 
@@ -2942,22 +3007,47 @@ async def transition_to_gui(page: ft.Page):
             ft.dropdown.Option("|"),
         ],
         on_change=on_delim_change,
-        tooltip="Field delimiter",
+        tooltip="📋 Field separator character\n• Auto: Automatically detects delimiter (recommended)\n• , (comma): Most common CSV delimiter\n• \\t (tab): Tab-separated values\n• ; (semicolon): European CSV files\n• | (pipe): Alternative separator",
     )
     dialog_controls["delim_dropdown"] = delim_dropdown
 
     search_term = ft.TextField(
         label="Search term", 
         width=200, 
-        tooltip="Enter text to search (press Enter to search)",
+        tooltip="🔍 Enter text to find in your data\n• Search across all columns or specific column\n• Press Enter to start search\n• Case-sensitive option available\n• Supports partial and whole word matching",
         on_submit=on_search,  # Allow search on Enter key
     )
-    search_column = ft.Dropdown(label="Search Column", width=150, options=[ft.dropdown.Option("All Columns")])
-    case_switch = ft.Switch(label="Case", value=False)
-    whole_switch = ft.Switch(label="Whole", value=False)
-    search_btn = ft.ElevatedButton(text="Search", on_click=on_search)
-    prev_btn = ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=on_prev_match, tooltip="Previous")
-    next_btn = ft.IconButton(icon=ft.Icons.ARROW_FORWARD, on_click=on_next_match, tooltip="Next")
+    search_column = ft.Dropdown(
+        label="Search Column", 
+        width=150, 
+        options=[ft.dropdown.Option("All Columns")],
+        tooltip="📊 Choose where to search\n• All Columns: Search entire dataset\n• Specific column: Focus search on one column\n• Options update after loading data"
+    )
+    case_switch = ft.Switch(
+        label="Case", 
+        value=False,
+        tooltip="🔤 Case-sensitive search\n• ON: 'Apple' ≠ 'apple'\n• OFF: 'Apple' = 'apple'\n• Default: OFF (case-insensitive)"
+    )
+    whole_switch = ft.Switch(
+        label="Whole", 
+        value=False,
+        tooltip="🎯 Whole word matching\n• ON: 'cat' won't match 'category'\n• OFF: 'cat' will match 'category'\n• Default: OFF (partial matching)"
+    )
+    search_btn = ft.ElevatedButton(
+        text="Search", 
+        on_click=on_search,
+        tooltip="▶️ Start searching your data\n• Results show in Data View tab\n• Matching rows are highlighted\n• Use navigation buttons to browse results"
+    )
+    prev_btn = ft.IconButton(
+        icon=ft.Icons.ARROW_BACK, 
+        on_click=on_prev_match, 
+        tooltip="⬅️ Go to previous search result\n• Navigate through found matches\n• Wraps to last result when at first"
+    )
+    next_btn = ft.IconButton(
+        icon=ft.Icons.ARROW_FORWARD, 
+        on_click=on_next_match, 
+        tooltip="➡️ Go to next search result\n• Navigate through found matches\n• Wraps to first result when at last"
+    )
 
     dialog_controls["search_term"] = search_term
     dialog_controls["search_column"] = search_column
@@ -2973,11 +3063,24 @@ async def transition_to_gui(page: ft.Page):
         value="csv",
         options=[ft.dropdown.Option("csv"), ft.dropdown.Option("xlsx")],
         on_change=lambda e: dialog_controls.__setitem__("export_format", e.control.value),
+        tooltip="💾 Choose export file format\n• CSV: Comma-separated values (universal)\n• XLSX: Excel format (preserves formatting)\n• CSV recommended for compatibility"
     )
     dialog_controls["export_fmt"] = export_fmt
-    export_ds_btn = ft.ElevatedButton("Export Dataset", on_click=export_dataset, tooltip="Save full dataset")
-    export_search_btn = ft.ElevatedButton("Export Search", on_click=export_search_results, tooltip="Save search matches")
-    export_analysis_btn = ft.ElevatedButton("Export Analysis", on_click=export_analysis_text, tooltip="Save last analysis")
+    export_ds_btn = ft.ElevatedButton(
+        "Export Dataset", 
+        on_click=export_dataset, 
+        tooltip="💾 Save the complete dataset\n• Exports all loaded data\n• Choose location and format\n• Preserves original data structure"
+    )
+    export_search_btn = ft.ElevatedButton(
+        "Export Search", 
+        on_click=export_search_results, 
+        tooltip="🔍 Save search results\n• Exports only matching rows\n• Must run a search first\n• Includes highlighted matches"
+    )
+    export_analysis_btn = ft.ElevatedButton(
+        "Export Analysis", 
+        on_click=export_analysis_text, 
+        tooltip="📊 Save analysis output\n• Exports console text results\n• Includes all analysis summaries\n• Saves as text file"
+    )
 
     dialog_controls["export_ds_btn"] = export_ds_btn
     dialog_controls["export_search_btn"] = export_search_btn
@@ -3252,12 +3355,12 @@ async def transition_to_gui(page: ft.Page):
                         # --- Smart Recommendations Panel ---
                         dialog_controls["recommendations_panel"],
                         
-                        # Enhanced DataViewWidget - Multi-mode data display with table, text, and unstructured views
+                        # Enhanced DataViewWidget - Multi-mode data display with table, text, and unstructured views (NO AI ASSISTANT)
                         enhanced_data_view.get_widget(),
                     ],
                     spacing=10,
                     expand=True,
-                    scroll=ft.ScrollMode.AUTO,  # Enable vertical scrolling
+                    scroll=ft.ScrollMode.AUTO,  # Enable vertical scrolling (CLEAN DATA VIEW - NO AI ASSISTANT)
                 ),
             ),
             ft.Tab(

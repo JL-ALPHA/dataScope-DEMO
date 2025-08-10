@@ -5,7 +5,6 @@ Provides alternative view modes for data display including:
 - Standard DataTable View (existing functionality)
 - Plain Text View 
 - Syntax Highlighted View
-- Unstructured Data View
 
 Maintains performance standards while providing flexible display options.
 """
@@ -18,6 +17,7 @@ from typing import Optional, Dict, Any, Literal
 from io import StringIO
 import re
 from data_view import DataViewWidget
+from syntax_highlight_utils import detect_language, highlight_code_with_lines, get_language_options
 
 
 class EnhancedDataView:
@@ -26,7 +26,8 @@ class EnhancedDataView:
     def __init__(self, page: ft.Page):
         self.page = page
         self.current_df: Optional[pd.DataFrame] = None
-        self.current_view_mode: Literal["table", "plain_text", "syntax_highlighted", "unstructured"] = "table"
+        self.current_view_mode: Literal["table", "plain_text", "syntax_highlighted"] = "table"
+        self.raw_syntax_content: str = ""  # Store raw content for copying
         
         # Initialize the original DataViewWidget for table mode
         self.table_widget = DataViewWidget(page)
@@ -34,7 +35,6 @@ class EnhancedDataView:
         # View mode containers
         self.plain_text_view: Optional[ft.Container] = None
         self.syntax_highlighted_view: Optional[ft.Container] = None
-        self.unstructured_view: Optional[ft.Container] = None
         
         # Main container that will switch between different views
         self.main_container = self._create_main_container()
@@ -103,11 +103,6 @@ class EnhancedDataView:
                     value="syntax_highlighted",
                     label=ft.Text("🎨 Syntax Highlighted", color=title_color),
                     tooltip="Formatted text with syntax highlighting"
-                ),
-                ft.Segment(
-                    value="unstructured",
-                    label=ft.Text("🔍 Unstructured", color=title_color),
-                    tooltip="Raw unstructured data view"
                 ),
             ],
             on_change=self._on_view_mode_change,
@@ -209,30 +204,17 @@ class EnhancedDataView:
             border_radius=10 if is_dark_mode else None,
         )
         
-        # Syntax Highlighted View
-        self.syntax_highlighted_field = ft.TextField(
-            multiline=True,
-            read_only=True,
-            min_lines=20,
-            max_lines=20,
-            expand=True,
-            border_radius=10,
-            content_padding=15,
-            bgcolor=text_bg,
-            color=text_color,
-            border_color=border_color,
-            focused_border_color=border_color,
-            text_style=ft.TextStyle(
-                font_family="Consolas, 'Courier New', monospace",
-                size=12,
-                color=text_color,
-            ),
+        # Syntax Highlighted View - using Pygments with real syntax highlighting
+        self.syntax_highlighted_field = ft.Markdown(
+            value="",
+            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            code_theme=ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark_mode else ft.MarkdownCodeTheme.ATOM_ONE_LIGHT,
         )
         
         self.syntax_highlighted_view = ft.Container(
             content=ft.Column([
                 ft.Row([
-                    ft.Text("🎨 Syntax Highlighted View", 
+                    ft.Text("🎨 Real Syntax Highlighting", 
                            style=ft.TextThemeStyle.TITLE_SMALL, 
                            weight=ft.FontWeight.BOLD,
                            color=title_color),
@@ -240,50 +222,14 @@ class EnhancedDataView:
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 
                 ft.Container(
-                    content=self.syntax_highlighted_field,
+                    content=ft.Column([
+                        self.syntax_highlighted_field,
+                    ], scroll=ft.ScrollMode.AUTO),
                     expand=True,
-                ),
-            ]),
-            expand=True,
-            padding=10,
-            bgcolor=text_bg if is_dark_mode else None,
-            border=ft.border.all(1, border_color) if is_dark_mode else None,
-            border_radius=10 if is_dark_mode else None,
-        )
-        
-        # Unstructured View
-        self.unstructured_field = ft.TextField(
-            multiline=True,
-            read_only=True,
-            min_lines=20,
-            max_lines=20,
-            expand=True,
-            border_radius=10,
-            content_padding=15,
-            bgcolor=text_bg,
-            color=text_color,
-            border_color=border_color,
-            focused_border_color=border_color,
-            text_style=ft.TextStyle(
-                font_family="Consolas, 'Courier New', monospace",
-                size=12,
-                color=text_color,
-            ),
-        )
-        
-        self.unstructured_view = ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Text("🔍 Unstructured Data View", 
-                           style=ft.TextThemeStyle.TITLE_SMALL, 
-                           weight=ft.FontWeight.BOLD,
-                           color=title_color),
-                    self._create_unstructured_controls(),
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                
-                ft.Container(
-                    content=self.unstructured_field,
-                    expand=True,
+                    bgcolor=text_bg if is_dark_mode else None,
+                    border=ft.border.all(1, border_color),
+                    border_radius=10,
+                    padding=10,
                 ),
             ]),
             expand=True,
@@ -310,15 +256,18 @@ class EnhancedDataView:
     
     def _create_syntax_controls(self) -> ft.Row:
         """Create controls for syntax highlighted view."""
+        # Get supported languages from syntax highlighting utils
+        supported_langs = get_language_options()
+        
         self.syntax_format_dropdown = ft.Dropdown(
-            label="Format",
-            width=120,
-            value="json",
+            label="Language",
+            width=140,
+            value="auto",
             options=[
-                ft.dropdown.Option("json", "JSON"),
-                ft.dropdown.Option("csv", "CSV"),
-                ft.dropdown.Option("xml", "XML"),
-                ft.dropdown.Option("yaml", "YAML"),
+                ft.dropdown.Option("auto", "Auto-detect"),
+            ] + [
+                ft.dropdown.Option(lang_code, lang_name) 
+                for lang_code, lang_name in supported_langs
             ],
             on_change=self._on_syntax_format_change,
         )
@@ -334,34 +283,6 @@ class EnhancedDataView:
                 icon=ft.Icons.REFRESH,
                 tooltip="Refresh view",
                 on_click=self._refresh_syntax_text,
-            ),
-        ], spacing=5)
-    
-    def _create_unstructured_controls(self) -> ft.Row:
-        """Create controls for unstructured view."""
-        self.unstructured_format_dropdown = ft.Dropdown(
-            label="Format",
-            width=120,
-            value="raw",
-            options=[
-                ft.dropdown.Option("raw", "Raw Data"),
-                ft.dropdown.Option("delimited", "Delimited"),
-                ft.dropdown.Option("key_value", "Key-Value Pairs"),
-            ],
-            on_change=self._on_unstructured_format_change,
-        )
-        
-        return ft.Row([
-            self.unstructured_format_dropdown,
-            ft.IconButton(
-                icon=ft.Icons.COPY,
-                tooltip="Copy to clipboard",
-                on_click=self._copy_unstructured_text,
-            ),
-            ft.IconButton(
-                icon=ft.Icons.REFRESH,
-                tooltip="Refresh view",
-                on_click=self._refresh_unstructured_text,
             ),
         ], spacing=5)
     
@@ -387,9 +308,6 @@ class EnhancedDataView:
         elif mode == "syntax_highlighted":
             self.content_container.content = self.syntax_highlighted_view
             self._update_syntax_highlighted_view()
-        elif mode == "unstructured":
-            self.content_container.content = self.unstructured_view
-            self._update_unstructured_view()
         
         # Update the page
         self.page.update()
@@ -406,8 +324,6 @@ class EnhancedDataView:
             self._update_plain_text_view()
         elif self.current_view_mode == "syntax_highlighted":
             self._update_syntax_highlighted_view()
-        elif self.current_view_mode == "unstructured":
-            self._update_unstructured_view()
     
     def _update_plain_text_view(self):
         """Update the plain text view with current data."""
@@ -434,80 +350,96 @@ class EnhancedDataView:
             self.page.update()
     
     def _update_syntax_highlighted_view(self):
-        """Update the syntax highlighted view with current data."""
+        """Update the syntax highlighted view with current data using real Pygments highlighting."""
         if self.current_df is None:
-            self.syntax_highlighted_field.value = "No data loaded"
+            self.syntax_highlighted_field.value = "```\nNo data loaded\n```"
+            self.raw_syntax_content = "No data loaded"
             return
         
         try:
-            format_type = getattr(self.syntax_format_dropdown, 'value', 'json')
+            # Get the selected language/format
+            selected_format = getattr(self.syntax_format_dropdown, 'value', 'auto')
             
-            if format_type == "json":
-                # Convert to JSON with proper formatting
+            # Convert DataFrame to appropriate format based on selection
+            if selected_format == "auto":
+                # Auto-detect based on data structure - default to JSON for DataFrames
                 json_data = self.current_df.head(100).to_dict('records')
-                formatted_content = json.dumps(json_data, indent=2, default=str)
+                raw_content = json.dumps(json_data, indent=2, default=str)
+                detected_language = detect_language(raw_content)
+                language = detected_language if detected_language != "text" else "json"
+            
+            elif selected_format == "json":
+                json_data = self.current_df.head(100).to_dict('records')
+                raw_content = json.dumps(json_data, indent=2, default=str)
+                language = "json"
                 
-            elif format_type == "csv":
-                # Convert to CSV format
+            elif selected_format == "csv":
                 buffer = StringIO()
                 self.current_df.head(100).to_csv(buffer, index=False)
-                formatted_content = buffer.getvalue()
+                raw_content = buffer.getvalue()
+                language = "csv"
                 
-            elif format_type == "xml":
-                # Convert to XML-like format
-                formatted_content = self._dataframe_to_xml()
+            elif selected_format == "xml":
+                raw_content = self._dataframe_to_xml()
+                language = "xml"
                 
-            elif format_type == "yaml":
-                # Convert to YAML-like format
-                formatted_content = self._dataframe_to_yaml()
+            elif selected_format == "yaml":
+                raw_content = self._dataframe_to_yaml()
+                language = "yaml"
+                
+            elif selected_format == "python":
+                # Show DataFrame as Python code
+                raw_content = f"import pandas as pd\n\n# DataFrame with {len(self.current_df)} rows and {len(self.current_df.columns)} columns\ndf = pd.DataFrame({{\n"
+                for col in self.current_df.columns[:10]:  # Show first 10 columns
+                    sample_values = self.current_df[col].head(3).tolist()
+                    raw_content += f"    '{col}': {sample_values},\n"
+                raw_content += "})"
+                language = "python"
             
             else:
-                formatted_content = str(self.current_df.head(100))
+                # Use the selected language directly
+                if selected_format == "csv":
+                    buffer = StringIO()
+                    self.current_df.head(100).to_csv(buffer, index=False)
+                    raw_content = buffer.getvalue()
+                else:
+                    json_data = self.current_df.head(100).to_dict('records')
+                    raw_content = json.dumps(json_data, indent=2, default=str)
+                language = selected_format
             
             # Limit content size for performance
-            if len(formatted_content) > 50000:
-                formatted_content = formatted_content[:50000] + "\n\n... (Content truncated for performance)"
+            if len(raw_content) > 50000:
+                raw_content = raw_content[:50000] + "\n\n... (Content truncated for performance)"
             
-            self.syntax_highlighted_field.value = formatted_content
+            # Get theme based on current page theme
+            is_dark_mode = getattr(self.page, 'theme_mode', ft.ThemeMode.LIGHT) == ft.ThemeMode.DARK
             
-        except Exception as e:
-            self.syntax_highlighted_field.value = f"Error generating syntax highlighted view: {str(e)}"
-        
-        if hasattr(self, 'page'):
-            self.page.update()
-    
-    def _update_unstructured_view(self):
-        """Update the unstructured view with current data."""
-        if self.current_df is None:
-            self.unstructured_field.value = "No data loaded"
-            return
-        
-        try:
-            format_type = getattr(self.unstructured_format_dropdown, 'value', 'raw')
+            # Generate syntax highlighted content with line numbers
+            highlighted_content = highlight_code_with_lines(
+                code=raw_content,
+                lang=language,
+                dark_mode=is_dark_mode
+            )
             
-            if format_type == "raw":
-                # Show raw data without structure
-                formatted_content = self._dataframe_to_raw()
-                
-            elif format_type == "delimited":
-                # Show as delimited text with custom separators
-                formatted_content = self._dataframe_to_delimited()
-                
-            elif format_type == "key_value":
-                # Show as key-value pairs
-                formatted_content = self._dataframe_to_key_value()
+            # Set the highlighted content in markdown format
+            self.syntax_highlighted_field.value = f"```{language}\n{raw_content}\n```"
             
-            else:
-                formatted_content = str(self.current_df.head(100))
+            # Store raw content for copying
+            self.raw_syntax_content = raw_content
             
-            # Limit content size for performance
-            if len(formatted_content) > 50000:
-                formatted_content = formatted_content[:50000] + "\n\n... (Content truncated for performance)"
+            # Update the code theme based on current theme
+            self.syntax_highlighted_field.code_theme = (
+                ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark_mode 
+                else ft.MarkdownCodeTheme.ATOM_ONE_LIGHT
+            )
             
-            self.unstructured_field.value = formatted_content
+            print(f"[EnhancedDataView] Applied {language} syntax highlighting with line numbers")
             
         except Exception as e:
-            self.unstructured_field.value = f"Error generating unstructured view: {str(e)}"
+            error_msg = f"Error generating syntax highlighted view: {str(e)}"
+            self.syntax_highlighted_field.value = f"```\n{error_msg}\n```"
+            self.raw_syntax_content = error_msg
+            print(f"[EnhancedDataView] Syntax highlighting error: {str(e)}")
         
         if hasattr(self, 'page'):
             self.page.update()
@@ -537,46 +469,6 @@ class EnhancedDataView:
         
         return '\n'.join(lines)
     
-    def _dataframe_to_raw(self) -> str:
-        """Convert DataFrame to raw unstructured format."""
-        lines = []
-        
-        for idx, row in self.current_df.head(100).iterrows():
-            row_data = []
-            for col, value in row.items():
-                row_data.append(f"{col}={value}")
-            lines.append(" | ".join(row_data))
-        
-        return '\n'.join(lines)
-    
-    def _dataframe_to_delimited(self) -> str:
-        """Convert DataFrame to custom delimited format."""
-        lines = []
-        delimiter = " :: "
-        
-        # Header
-        lines.append(delimiter.join(self.current_df.columns))
-        lines.append("=" * 80)
-        
-        # Data rows
-        for idx, row in self.current_df.head(100).iterrows():
-            lines.append(delimiter.join(str(val) for val in row.values))
-        
-        return '\n'.join(lines)
-    
-    def _dataframe_to_key_value(self) -> str:
-        """Convert DataFrame to key-value pairs format."""
-        lines = []
-        
-        for idx, row in self.current_df.head(50).iterrows():
-            lines.append(f"RECORD {idx + 1}:")
-            lines.append("-" * 40)
-            for col, value in row.items():
-                lines.append(f"{col}: {value}")
-            lines.append("")  # Empty line between records
-        
-        return '\n'.join(lines)
-    
     # Event handlers for controls
     def _copy_plain_text(self, e):
         """Copy plain text to clipboard."""
@@ -585,15 +477,9 @@ class EnhancedDataView:
             self._show_copy_notification()
     
     def _copy_syntax_text(self, e):
-        """Copy syntax highlighted text to clipboard."""
-        if self.syntax_highlighted_field.value:
-            self.page.set_clipboard(self.syntax_highlighted_field.value)
-            self._show_copy_notification()
-    
-    def _copy_unstructured_text(self, e):
-        """Copy unstructured text to clipboard."""
-        if self.unstructured_field.value:
-            self.page.set_clipboard(self.unstructured_field.value)
+        """Copy syntax highlighted text to clipboard (raw content without markdown formatting)."""
+        if self.raw_syntax_content:
+            self.page.set_clipboard(self.raw_syntax_content)
             self._show_copy_notification()
     
     def _show_copy_notification(self):
@@ -609,17 +495,9 @@ class EnhancedDataView:
         """Refresh syntax highlighted view."""
         self._update_syntax_highlighted_view()
     
-    def _refresh_unstructured_text(self, e):
-        """Refresh unstructured view."""
-        self._update_unstructured_view()
-    
     def _on_syntax_format_change(self, e):
         """Handle syntax format changes."""
         self._update_syntax_highlighted_view()
-    
-    def _on_unstructured_format_change(self, e):
-        """Handle unstructured format changes."""
-        self._update_unstructured_view()
     
     def get_widget(self) -> ft.Container:
         """Get the main widget container."""
@@ -692,14 +570,10 @@ class EnhancedDataView:
             except Exception:
                 pass
         
-        # Update text field themes
+        # Update text field and markdown themes
         text_fields = []
         if hasattr(self, 'plain_text_field'):
             text_fields.append(self.plain_text_field)
-        if hasattr(self, 'syntax_highlighted_field'):
-            text_fields.append(self.syntax_highlighted_field)
-        if hasattr(self, 'unstructured_field'):
-            text_fields.append(self.unstructured_field)
             
         for field in text_fields:
             if field:
@@ -715,14 +589,19 @@ class EnhancedDataView:
                     color=text_color,
                 )
         
+        # Update syntax highlighted field (Markdown) theme
+        if hasattr(self, 'syntax_highlighted_field'):
+            self.syntax_highlighted_field.code_theme = (
+                ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark_mode 
+                else ft.MarkdownCodeTheme.ATOM_ONE_LIGHT
+            )
+        
         # Update view containers background and text colors
         view_containers = []
         if hasattr(self, 'plain_text_view'):
             view_containers.append(('plain_text_view', self.plain_text_view, "📄 Plain Text View"))
         if hasattr(self, 'syntax_highlighted_view'):
-            view_containers.append(('syntax_highlighted_view', self.syntax_highlighted_view, "🎨 Syntax Highlighted View"))
-        if hasattr(self, 'unstructured_view'):
-            view_containers.append(('unstructured_view', self.unstructured_view, "🔍 Unstructured Data View"))
+            view_containers.append(('syntax_highlighted_view', self.syntax_highlighted_view, "🎨 Real Syntax Highlighting"))
             
         for view_name, container, title_text in view_containers:
             if container:
@@ -757,5 +636,3 @@ class EnhancedDataView:
                 self._update_plain_text_view()
             elif self.current_view_mode == "syntax_highlighted":
                 self._update_syntax_highlighted_view()
-            elif self.current_view_mode == "unstructured":
-                self._update_unstructured_view()

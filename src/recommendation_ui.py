@@ -26,6 +26,7 @@ def get_theme_colors(page: ft.Page):
             'card_medium_border': ft.Colors.ORANGE_700,
             'card_low_bg': ft.Colors.BLUE_900,
             'card_low_border': ft.Colors.BLUE_700,
+            'card_critical_bg': ft.Colors.RED_900,
             'button_bg': ft.Colors.BLUE_700,
             'accent_color': ft.Colors.AMBER_600
         }
@@ -44,9 +45,110 @@ def get_theme_colors(page: ft.Page):
             'card_medium_border': ft.Colors.ORANGE_300,
             'card_low_bg': ft.Colors.BLUE_50,
             'card_low_border': ft.Colors.BLUE_300,
+            'card_critical_bg': ft.Colors.RED_100,
             'button_bg': ft.Colors.BLUE_600,
             'accent_color': ft.Colors.AMBER_600
         }
+
+
+def create_interactive_recommendation_card(rec: Recommendation, on_click_handler, on_dismiss_handler, theme_colors) -> ft.Container:
+    """Create an interactive recommendation card with click and dismiss functionality."""
+    
+    # Determine card styling based on urgency
+    urgency_styles = {
+        'critical': {
+            'bg_color': theme_colors['card_critical_bg'] if 'card_critical_bg' in theme_colors else ft.Colors.RED_100,
+            'border_color': ft.Colors.RED_500,
+            'icon_color': ft.Colors.RED_700
+        },
+        'high': {
+            'bg_color': theme_colors['card_high_bg'],
+            'border_color': theme_colors['card_high_border'],
+            'icon_color': ft.Colors.ORANGE_700
+        },
+        'normal': {
+            'bg_color': theme_colors['card_medium_bg'],
+            'border_color': theme_colors['card_medium_border'],
+            'icon_color': ft.Colors.BLUE_700
+        },
+        'low': {
+            'bg_color': theme_colors['card_low_bg'],
+            'border_color': theme_colors['card_low_border'],
+            'icon_color': ft.Colors.GREY_600
+        }
+    }
+    
+    style = urgency_styles.get(rec.urgency, urgency_styles['normal'])
+    
+    # Create action button
+    action_button = ft.ElevatedButton(
+        text=f"Run {rec.action}",
+        icon=ft.Icons.PLAY_ARROW,
+        on_click=lambda e: on_click_handler(rec.action, rec.parameters),
+        style=ft.ButtonStyle(
+            bgcolor=theme_colors['button_bg'],
+            color=ft.Colors.WHITE,
+            padding=ft.Padding(10, 5, 10, 5)
+        ),
+        tooltip=f"Click to run {rec.action} analysis"
+    ) if rec.interactive else None
+    
+    # Create info button for explanation
+    info_button = ft.IconButton(
+        icon=ft.Icons.INFO_OUTLINE,
+        icon_color=style['icon_color'],
+        tooltip=rec.explanation,
+        icon_size=16
+    ) if rec.explanation else None
+    
+    # Create dismiss button
+    dismiss_button = ft.IconButton(
+        icon=ft.Icons.CLOSE,
+        icon_color=ft.Colors.GREY_600,
+        tooltip="Dismiss this recommendation",
+        on_click=lambda e: on_dismiss_handler(f"{rec.action}_{rec.title}"),
+        icon_size=16
+    )
+    
+    # Build button row
+    button_row_controls = []
+    if action_button:
+        button_row_controls.append(action_button)
+    if info_button:
+        button_row_controls.append(info_button)
+    button_row_controls.append(dismiss_button)
+    
+    return ft.Container(
+        content=ft.Column([
+            ft.Row([
+                ft.Text(rec.icon, size=20),
+                ft.Column([
+                    ft.Text(
+                        rec.title,
+                        weight=ft.FontWeight.BOLD,
+                        color=theme_colors['text_primary'],
+                        size=14
+                    ),
+                    ft.Text(
+                        rec.message,
+                        color=theme_colors['text_secondary'],
+                        size=12,
+                        expand=True
+                    )
+                ], expand=True, spacing=2),
+            ], spacing=10),
+            ft.Row(
+                button_row_controls,
+                alignment=ft.MainAxisAlignment.END,
+                spacing=5
+            ) if button_row_controls else ft.Container()
+        ], spacing=8),
+        bgcolor=style['bg_color'],
+        border=ft.Border.all(1, style['border_color']),
+        border_radius=8,
+        padding=ft.Padding(12, 8, 12, 8),
+        margin=ft.Margin(0, 0, 0, 8)
+    )
 
 
 def create_recommendations_panel(page: ft.Page = None) -> tuple[ft.Container, ft.Column]:
