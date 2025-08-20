@@ -802,7 +802,7 @@ def get_data_stats(df, file_path):
 
 
 def split_into_chunks(
-    dataset_name, input_file, chunk_size_mb=256, logger_fn=None, progress_fn=None
+    dataset_name, input_file, chunk_size_mb=256, encoding="utf-8", logger_fn=None, progress_fn=None
 ):
     """Split a CSV into smaller chunks with optional progress updates.
 
@@ -817,6 +817,8 @@ def split_into_chunks(
         Path to the CSV file to split.
     chunk_size_mb : int, optional
         Desired chunk size in megabytes. Defaults to ``256``.
+    encoding : str, optional
+        Text encoding to use for reading/writing files. Defaults to ``utf-8``.
     logger_fn : callable, optional
         Function used for log messages. ``print`` is used when omitted.
     progress_fn : callable, optional
@@ -839,12 +841,13 @@ def split_into_chunks(
         log(f"Reading from: {input_file}")
         log(f"Writing chunks to: {output_dir}")
         log(f"Chunk size: {chunk_size_mb} MB")
+        log(f"Encoding: {encoding}")
         if progress_fn:
             progress_fn(0, "Starting chunking")
 
         total_bytes = os.path.getsize(input_file)
 
-        with open(input_file, "r", encoding="utf-8") as infile:
+        with open(input_file, "r", encoding=encoding) as infile:
             reader = csv.reader(infile)
             try:
                 header = next(reader)
@@ -865,14 +868,14 @@ def split_into_chunks(
             last_percent = 0
 
             for row in tqdm(reader, desc="Splitting CSV", unit="rows"):
-                row_size = len(",".join(row).encode("utf-8"))
+                row_size = len(",".join(row).encode(encoding))
 
                 if current_chunk_size + row_size > chunk_size_bytes:
                     output_file = os.path.join(
                         output_dir, f"{base_filename}_chunk_{chunk_index}.csv"
                     )
                     with open(
-                        output_file, "w", encoding="utf-8", newline=""
+                        output_file, "w", encoding=encoding, newline=""
                     ) as outfile:
                         writer = csv.writer(outfile)
                         writer.writerow(header)
@@ -900,13 +903,13 @@ def split_into_chunks(
                 output_file = os.path.join(
                     output_dir, f"{base_filename}_chunk_{chunk_index}.csv"
                 )
-                with open(output_file, "w", encoding="utf-8", newline="") as outfile:
+                with open(output_file, "w", encoding=encoding, newline="") as outfile:
                     writer = csv.writer(outfile)
                     writer.writerow(header)
                     writer.writerows(current_chunk)
                 log(f"Final chunk {chunk_index} written: {len(current_chunk)} rows")
                 bytes_read += sum(
-                    len(",".join(r).encode("utf-8")) for r in current_chunk
+                    len(",".join(r).encode(encoding)) for r in current_chunk
                 )
 
         log(f"All chunks written. Total rows: {row_count}")

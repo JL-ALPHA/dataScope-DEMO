@@ -23,11 +23,19 @@ from syntax_highlight_utils import detect_language, highlight_code_with_lines, g
 class EnhancedDataView:
     """Enhanced data view widget with multiple display modes."""
     
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, accessibility_manager=None):
         self.page = page
+        self.accessibility_manager = accessibility_manager
         self.current_df: Optional[pd.DataFrame] = None
         self.current_view_mode: Literal["table", "plain_text", "syntax_highlighted"] = "table"
         self.raw_syntax_content: str = ""  # Store raw content for copying
+        
+        # Magnification settings
+        self.magnification_level = 100  # Percentage
+        self.magnification_enabled = False
+        self.min_magnification = 50
+        self.max_magnification = 300
+        self.magnification_dropdown = None
         
         # Initialize the original DataViewWidget for table mode
         self.table_widget = DataViewWidget(page)
@@ -50,6 +58,12 @@ class EnhancedDataView:
             # Ensure all components are created before applying theme
             if hasattr(self, 'header_container') and hasattr(self, 'view_mode_selector'):
                 self.update_theme()
+                
+                # Initialize magnification dropdown with current setting
+                if hasattr(self, 'magnification_dropdown') and self.accessibility_manager:
+                    current_mag = self.accessibility_manager.magnification_level
+                    self.magnification_dropdown.value = f"{current_mag}%"
+                    
                 print("[EnhancedDataView] Initial theme applied successfully")
             else:
                 # If components aren't ready, set a delayed theme update
@@ -113,6 +127,32 @@ class EnhancedDataView:
             ),
         )
         
+        # Create magnification dropdown with accessibility features
+        self.magnification_dropdown = ft.Dropdown(
+            label="🔍 Magnification",
+            value="100%",
+            options=[
+                ft.dropdown.Option("50%", "50% - Extra Small"),
+                ft.dropdown.Option("75%", "75% - Small"),
+                ft.dropdown.Option("100%", "100% - Normal"),
+                ft.dropdown.Option("125%", "125% - Large"),
+                ft.dropdown.Option("150%", "150% - Extra Large"),
+                ft.dropdown.Option("200%", "200% - Double"),
+                ft.dropdown.Option("250%", "250% - Large Scale"),
+                ft.dropdown.Option("300%", "300% - Maximum"),
+            ],
+            width=220,
+            on_change=self._on_magnification_change,
+            tooltip="Adjust view magnification for better visibility",
+            text_style=ft.TextStyle(
+                size=14,
+                color=title_color
+            ),
+            border_color=ft.Colors.GREY_600 if is_dark_mode else ft.Colors.BLUE_GREY_300,
+            focused_border_color=ft.Colors.BLUE_400,
+            bgcolor=ft.Colors.GREY_800 if is_dark_mode else ft.Colors.WHITE,
+        )
+        
         # Create view containers
         self._create_text_views()
         
@@ -133,7 +173,16 @@ class EnhancedDataView:
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 
                 ft.Container(
-                    content=self.view_mode_selector,
+                    content=ft.Row([
+                        ft.Container(
+                            content=self.view_mode_selector,
+                            expand=True,
+                        ),
+                        ft.Container(
+                            content=self.magnification_dropdown,
+                            padding=ft.padding.only(left=10),
+                        ),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     padding=ft.padding.symmetric(vertical=10),
                 ),
             ]),
@@ -311,6 +360,119 @@ class EnhancedDataView:
         
         # Update the page
         self.page.update()
+    
+    def _on_magnification_change(self, e: ft.ControlEvent):
+        """Handle magnification level changes."""
+        print(f"[EnhancedDataView] Magnification dropdown changed to: {e.control.value}")
+        try:
+            # Extract percentage value from dropdown selection
+            mag_value = e.control.value
+            if mag_value:
+                # Convert "100%" to 100
+                percentage = int(mag_value.replace('%', ''))
+                print(f"[EnhancedDataView] Setting magnification to {percentage}%")
+                
+                # If accessibility manager is available, use it
+                if self.accessibility_manager:
+                    print(f"[EnhancedDataView] Using accessibility manager for magnification")
+                    # Update accessibility manager
+                    success = self.accessibility_manager.set_magnification_level(percentage)
+                    
+                    if success:
+                        # Apply magnification to this enhanced data view
+                        self._apply_magnification(percentage)
+                        
+                        # Announce change for screen reader users
+                        if self.accessibility_manager.screen_reader_enabled:
+                            announcement = f"Magnification set to {mag_value}"
+                            self.accessibility_manager.announce_change(announcement)
+                            
+                        # Log the change
+                        self.accessibility_manager.logger.info(f"Enhanced data view magnification changed to {mag_value}")
+                        print(f"[EnhancedDataView] Successfully applied magnification {percentage}%")
+                    else:
+                        print(f"[EnhancedDataView] Failed to set magnification via accessibility manager")
+                        # Reset dropdown to previous value on failure
+                        self.magnification_dropdown.value = f"{self.accessibility_manager.magnification_level}%"
+                        self.page.update()
+                else:
+                    # No accessibility manager - apply magnification directly
+                    print(f"[EnhancedDataView] Applying magnification {percentage}% directly (no accessibility manager)")
+                    self._apply_magnification(percentage)
+                    
+        except Exception as e:
+            error_msg = f"Error changing magnification: {str(e)}"
+            print(f"[EnhancedDataView] {error_msg}")
+            if self.accessibility_manager:
+                self.accessibility_manager.logger.error(error_msg)
+            else:
+                print(f"[EnhancedDataView] {error_msg}")
+            
+            # Reset dropdown to safe value
+            self.magnification_dropdown.value = "100%"
+            self.page.update()
+    
+    def _apply_magnification(self, percentage: int):
+        """Apply magnification scaling to enhanced data view components."""
+        print(f"[EnhancedDataView] Applying magnification {percentage}% to components")
+        try:
+            scale_factor = percentage / 100.0
+            print(f"[EnhancedDataView] Scale factor: {scale_factor}")
+            
+            # Update text sizes based on scale factor
+            base_font_size = 14
+            scaled_font_size = max(8, int(base_font_size * scale_factor))
+            print(f"[EnhancedDataView] Scaled font size: {scaled_font_size}")
+            
+            # Apply to header title
+            if hasattr(self, 'header_container') and self.header_container.content:
+                title_row = self.header_container.content.controls[0]
+                if title_row.controls:
+                    title_text = title_row.controls[0]
+                    if hasattr(title_text, 'size'):
+                        title_text.size = max(16, int(20 * scale_factor))
+                        print(f"[EnhancedDataView] Updated header title size to {title_text.size}")
+            
+            # Apply to plain text view
+            if hasattr(self, 'plain_text_field'):
+                self.plain_text_field.text_size = scaled_font_size
+                print(f"[EnhancedDataView] Updated plain text field size to {scaled_font_size}")
+            
+            # Apply to syntax highlighted view
+            if hasattr(self, 'syntax_text_field'):
+                self.syntax_text_field.text_size = scaled_font_size
+                print(f"[EnhancedDataView] Updated syntax text field size to {scaled_font_size}")
+            
+            # Apply to table widget if it supports magnification
+            if hasattr(self.table_widget, 'apply_magnification'):
+                print(f"[EnhancedDataView] Applying magnification to table widget")
+                self.table_widget.apply_magnification(percentage)
+            else:
+                print(f"[EnhancedDataView] Table widget does not support magnification")
+            
+            # Update dropdown styling
+            if hasattr(self, 'magnification_dropdown'):
+                self.magnification_dropdown.text_size = scaled_font_size
+                print(f"[EnhancedDataView] Updated dropdown text size to {scaled_font_size}")
+                
+            # Update view mode selector
+            if hasattr(self, 'view_mode_selector'):
+                for segment in self.view_mode_selector.segments:
+                    if hasattr(segment.label, 'size'):
+                        segment.label.size = scaled_font_size
+                print(f"[EnhancedDataView] Updated view mode selector sizes")
+            
+            # Update the page
+            print(f"[EnhancedDataView] Updating page to reflect magnification changes")
+            self.page.update()
+            print(f"[EnhancedDataView] Magnification {percentage}% applied successfully")
+            
+        except Exception as e:
+            error_msg = f"Error applying magnification to enhanced data view: {str(e)}"
+            if self.accessibility_manager:
+                self.accessibility_manager.logger.error(error_msg)
+            else:
+                print(f"[EnhancedDataView] {error_msg}")
     
     def load_data(self, df: pd.DataFrame, **kwargs):
         """Load data into all views."""
@@ -567,6 +729,19 @@ class EnhancedDataView:
                         bgcolor=ft.Colors.WHITE,
                         color=text_color,
                     )
+            except Exception:
+                pass
+        
+        # Update magnification dropdown theme
+        if hasattr(self, 'magnification_dropdown'):
+            try:
+                self.magnification_dropdown.bgcolor = text_bg
+                self.magnification_dropdown.border_color = border_color
+                self.magnification_dropdown.focused_border_color = ft.Colors.BLUE_400
+                self.magnification_dropdown.text_style = ft.TextStyle(
+                    size=14,
+                    color=text_color
+                )
             except Exception:
                 pass
         

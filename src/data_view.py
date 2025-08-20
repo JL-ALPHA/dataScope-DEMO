@@ -48,6 +48,10 @@ class DataViewWidget:
         self.cache_max_age = 30.0  # Cache valid for 30 seconds
         self.cache_max_size = 100  # Maximum cached searches
         
+        # Magnification support - dynamic font sizes
+        self.current_magnification = 100  # Default 100%
+        self.scaled_font_sizes = self._calculate_scaled_fonts(100)
+        
         # Intelligent search optimization
         self.last_search_term = ""
         self.last_search_column = ""
@@ -430,7 +434,7 @@ class DataViewWidget:
         
         # Create columns with proper text colors and sizing
         columns = [ft.DataColumn(
-            ft.Text("#", color=header_text_color, weight=ft.FontWeight.BOLD, size=12),
+            ft.Text("#", color=header_text_color, weight=ft.FontWeight.BOLD, size=self.scaled_font_sizes['header_text']),
             numeric=True
         )]  # Row number column with larger font
         
@@ -441,7 +445,7 @@ class DataViewWidget:
                     col,  # Show complete column name
                     color=header_text_color,
                     weight=ft.FontWeight.BOLD,
-                    size=13,  # Larger font for better readability
+                    size=self.scaled_font_sizes['header_text'],  # Use scaled font size
                     text_align=ft.TextAlign.CENTER,
                     max_lines=2,  # Allow up to 2 lines for column names
                     overflow=ft.TextOverflow.ELLIPSIS,  # Use ellipsis for very long names
@@ -455,7 +459,7 @@ class DataViewWidget:
             cells = [ft.DataCell(ft.Text(
                 str(row_num), 
                 color=text_color,
-                size=11,  # Larger font for row numbers
+                size=self.scaled_font_sizes['row_number'],  # Use scaled font for row numbers
                 text_align=ft.TextAlign.CENTER
             ))]  # Sequential row number starting from 1
             
@@ -475,7 +479,7 @@ class DataViewWidget:
                         content=ft.Text(
                             display_text, 
                             color=ft.Colors.BLACK,
-                            size=12,  # Larger font for better readability
+                            size=self.scaled_font_sizes['cell_text'],  # Use scaled font for cell content
                             text_align=ft.TextAlign.LEFT,
                             max_lines=3,  # Allow up to 3 lines
                             overflow=ft.TextOverflow.ELLIPSIS,  # Truncate with ellipsis if too long
@@ -490,7 +494,7 @@ class DataViewWidget:
                     cells.append(ft.DataCell(ft.Text(
                         display_text,
                         color=text_color,
-                        size=12,  # Larger font for better readability
+                        size=self.scaled_font_sizes['cell_text'],  # Use scaled font for cell content
                         text_align=ft.TextAlign.LEFT,
                         max_lines=3,  # Allow up to 3 lines
                         overflow=ft.TextOverflow.ELLIPSIS,  # Truncate with ellipsis if too long
@@ -1101,6 +1105,79 @@ class DataViewWidget:
             print(f"[DataView] Status update deferred (control not on page yet): {e}")
         
         print(f"[DataView] Status updated: {status_type} -> {formatted_message}")
+    
+    def _calculate_scaled_fonts(self, percentage: int) -> dict:
+        """Calculate scaled font sizes based on magnification percentage."""
+        scale_factor = percentage / 100.0
+        base_sizes = {
+            'info_text': 14,
+            'pagination_text': 14,
+            'search_text': 16,
+            'status_text': 14,
+            'match_label': 12,
+            'search_status': 11,
+            'header_text': 12,
+            'cell_text': 12,
+            'row_number': 11
+        }
+        
+        return {key: max(8, int(size * scale_factor)) for key, size in base_sizes.items()}
+    
+    def apply_magnification(self, percentage: int) -> bool:
+        """Apply magnification scaling to all text elements in the data view."""
+        try:
+            # Update current magnification and calculate new font sizes
+            self.current_magnification = percentage
+            self.scaled_font_sizes = self._calculate_scaled_fonts(percentage)
+            
+            # Apply scaling to info texts
+            if hasattr(self, 'data_table_info') and self.data_table_info:
+                self.data_table_info.style = ft.TextStyle(
+                    size=self.scaled_font_sizes['info_text'], 
+                    color=self.data_table_info.style.color if self.data_table_info.style else ft.Colors.GREY_600
+                )
+            
+            if hasattr(self, 'pagination_info') and self.pagination_info:
+                self.pagination_info.style = ft.TextStyle(
+                    size=self.scaled_font_sizes['pagination_text'],
+                    color=self.pagination_info.style.color if self.pagination_info.style else ft.Colors.GREY_600
+                )
+            
+            # Apply scaling to search components
+            if hasattr(self, 'match_label') and self.match_label:
+                self.match_label.size = self.scaled_font_sizes['match_label']
+            
+            if hasattr(self, 'search_status') and self.search_status:
+                self.search_status.size = self.scaled_font_sizes['search_status']
+            
+            if hasattr(self, 'dynamic_status') and self.dynamic_status:
+                self.dynamic_status.size = self.scaled_font_sizes['status_text']
+            
+            # Apply scaling to search title if it exists
+            try:
+                if hasattr(self, 'search_controls') and self.search_controls:
+                    # Find the search title text in the search controls
+                    for control in self.search_controls.content.controls:
+                        if hasattr(control, 'controls'):
+                            for subcontrol in control.controls:
+                                if isinstance(subcontrol, ft.Text) and "Search" in str(subcontrol.value):
+                                    subcontrol.size = self.scaled_font_sizes['search_text']
+            except Exception:
+                pass  # Search controls might not be structured as expected
+                
+            # Refresh the data table with new font sizes - this will recreate all cells
+            if self.current_df is not None:
+                self._refresh_display()
+            
+            # Update the page to reflect changes
+            if self.page:
+                self.page.update()
+            
+            return True
+            
+        except Exception as e:
+            print(f"[DataView] Error applying magnification: {str(e)}")
+            return False
     
     def get_widget(self) -> ft.Container:
         """Get the main widget container."""

@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
+
 import data_handler
 from data_handler import (
     create_dataset_environment,
@@ -52,12 +53,16 @@ from data_view import DataViewWidget
 from enhanced_data_view import EnhancedDataView
 from recommendation_engine import recommendation_engine
 from recommendation_ui import create_recommendations_panel, update_recommendations_panel, refresh_recommendations_theme
+from accessibility_manager import AccessibilityManager
 
 dev_mode = False  # Set to True for development mode, False for production
 
 # Global variable to store the DF (SEAN FEATURE BUILDOUT)
 current_df = None
 current_theme_mode = ft.ThemeMode.LIGHT
+
+# Global accessibility manager
+accessibility_manager = None
 
 # Global data view widget instance
 data_view_widget = None
@@ -114,6 +119,92 @@ def save_theme_preference(dark_mode: bool) -> None:
     print(f"[Preferences] Theme saved -> {SETTINGS_FILE}")
 
 
+def get_theme_colors(page):
+    """Get theme-appropriate colors for UI elements."""
+    is_dark = page.theme_mode == ft.ThemeMode.DARK if hasattr(page, 'theme_mode') else False
+    
+    return {
+        'border_color': ft.Colors.GREY_600 if is_dark else ft.Colors.GREY_300,
+        'container_border': ft.Colors.GREY_600 if is_dark else ft.Colors.GREY_300,
+        'text_secondary': ft.Colors.GREY_300 if is_dark else ft.Colors.GREY_700,
+        'text_muted': ft.Colors.GREY_400 if is_dark else ft.Colors.GREY_600,
+    }
+
+def update_ui_theme_colors(page):
+    """Update all UI elements with theme-appropriate colors."""
+    try:
+        colors = get_theme_colors(page)
+        
+        # Update console text field border
+        console_field = dialog_controls.get("console_textfield")
+        if console_field:
+            console_field.border_color = colors['border_color']
+        
+        # Update file operations frame border and text
+        file_frame = dialog_controls.get("file_ops_frame")
+        if file_frame:
+            file_frame.border = ft.border.all(1, colors['container_border'])
+            # Update the text inside file frame
+            if file_frame.content and hasattr(file_frame.content, 'controls'):
+                for control in file_frame.content.controls:
+                    if hasattr(control, 'color'):
+                        control.color = colors['text_muted']
+        
+        # Update preset text color
+        preset_text = dialog_controls.get("preset_text")
+        if preset_text:
+            preset_text.color = colors['text_muted']
+        
+        # Update settings header text color
+        settings_header_text = dialog_controls.get("settings_header_text")
+        if settings_header_text:
+            settings_header_text.color = colors['text_secondary']
+        
+        # Update status texts that were created with hardcoded colors
+        status_elements = [
+            "chunk_status", "convert_status", "data_root_label", 
+            "convert_input_label", "convert_output_label", "data_view_header",
+            "convert_file_display", "convert_dir_display", "data_table_info",
+            "pagination_info", "desc_text", "file_save_placeholder"
+        ]
+        for element_key in status_elements:
+            element = dialog_controls.get(element_key)
+            if element and hasattr(element, 'color'):
+                element.color = colors['text_secondary']
+        
+        # Update info texts in advanced content
+        advanced_info_text = dialog_controls.get("advanced_info_text")
+        if advanced_info_text:
+            advanced_info_text.color = colors['text_muted']
+        
+        # Update Data View section headers
+        data_view_headers = dialog_controls.get("data_view_headers", [])
+        for header in data_view_headers:
+            if hasattr(header, 'color'):
+                header.color = colors['text_secondary']
+        
+        # Update data table colors
+        data_table = dialog_controls.get("data_table")
+        if data_table:
+            data_table.border = ft.border.all(1, colors['container_border'])
+            data_table.vertical_lines = ft.BorderSide(1, colors['border_color'])
+            data_table.horizontal_lines = ft.BorderSide(1, colors['border_color'])
+            # Set heading row color based on theme
+            if page.theme_mode == ft.ThemeMode.DARK:
+                data_table.heading_row_color = ft.Colors.GREY_800
+            else:
+                data_table.heading_row_color = ft.Colors.GREY_100
+        
+        # Update accessibility containers theme colors
+        if accessibility_manager:
+            accessibility_manager.update_accessibility_theme_colors(colors)
+            
+        print(f"[Theme] Updated UI element colors for {'dark' if page.theme_mode == ft.ThemeMode.DARK else 'light'} mode")
+        
+    except Exception as e:
+        print(f"[Theme] Error updating UI theme colors: {e}")
+
+
 # SETTINGS!-----------------------------------------------------------------------------------------
 
 # Global flag for checking if dataset was loaded
@@ -144,6 +235,7 @@ dialog_controls = {
     "file_picker": None,
     "theme_switch": None,
     "chunk_size_input": None,
+    "chunk_encoding_dropdown": None,
     "chunk_status": None,
     "logo_image": None,
     "tabs": None,
@@ -188,7 +280,18 @@ export_context = None
 async def write_output(message: str, page: ft.Page):
     print(message)
     if dialog_controls["output_text_field"]:
+        # Add new message with timestamp for better tracking
         dialog_controls["output_text_field"].value += message + "\n"
+        
+        # Auto-scroll to bottom to show latest content
+        lines = dialog_controls["output_text_field"].value.split('\n')
+        if len(lines) > 20:  # Limit to recent messages
+            dialog_controls["output_text_field"].value = '\n'.join(lines[-20:])
+        
+        # Force focus to ensure scrolling works
+        if hasattr(dialog_controls["output_text_field"], 'focus'):
+            dialog_controls["output_text_field"].focus()
+            
         page.update()
 
 
@@ -295,11 +398,24 @@ def update_pagination_info(page: ft.Page):
     page.update()
 
 
+def announce_immediate_change(event_type: str, message: str):
+    """
+    Immediately announce a change to the screen reader for responsive feedback.
+    This helps prevent lag when multiple actions are taken quickly.
+    """
+    global accessibility_manager
+    if accessibility_manager:
+        # Use only one announcement method to prevent double reading
+        accessibility_manager.announce_data_event(event_type, message)
+
+
 async def on_prev_page(e: ft.ControlEvent):
     """Handle previous page navigation."""
     current_page = dialog_controls.get("current_page", 1)
     if current_page > 1:
         dialog_controls["current_page"] = current_page - 1
+        # Announce page change immediately for screen reader
+        announce_immediate_change("navigation", f"Previous page: Page {current_page - 1}")
         await refresh_current_view(e.page)
 
 
@@ -309,6 +425,8 @@ async def on_next_page(e: ft.ControlEvent):
     total_pages = dialog_controls.get("total_pages", 1)
     if current_page < total_pages:
         dialog_controls["current_page"] = current_page + 1
+        # Announce page change immediately for screen reader
+        announce_immediate_change("navigation", f"Next page: Page {current_page + 1}")
         await refresh_current_view(e.page)
 
 
@@ -316,6 +434,8 @@ async def on_first_page(e: ft.ControlEvent):
     """Handle first page navigation."""
     if dialog_controls.get("current_page", 1) > 1:
         dialog_controls["current_page"] = 1
+        # Announce page change immediately for screen reader
+        announce_immediate_change("navigation", "First page: Page 1")
         await refresh_current_view(e.page)
 
 
@@ -324,6 +444,8 @@ async def on_last_page(e: ft.ControlEvent):
     total_pages = dialog_controls.get("total_pages", 1)
     if dialog_controls.get("current_page", 1) < total_pages:
         dialog_controls["current_page"] = total_pages
+        # Announce page change immediately for screen reader
+        announce_immediate_change("navigation", f"Last page: Page {total_pages}")
         await refresh_current_view(e.page)
 
 
@@ -331,6 +453,8 @@ def on_page_number_click(page_num):
     """Handle clicking on a specific page number."""
     async def handler(e: ft.ControlEvent):
         dialog_controls["current_page"] = page_num
+        # Announce page change immediately for screen reader
+        announce_immediate_change("navigation", f"Jumped to page {page_num}")
         await refresh_current_view(e.page)
     return handler
 
@@ -459,6 +583,8 @@ async def on_page_size_change(e: ft.ControlEvent):
         new_size = int(e.control.value)
         dialog_controls["rows_per_page"] = new_size
         dialog_controls["current_page"] = 1  # Reset to first page
+        # Announce page size change immediately for screen reader
+        announce_immediate_change("selection_changed", f"Page size changed to {new_size} rows per page")
         await refresh_current_view(e.page)
     except ValueError:
         pass
@@ -625,6 +751,19 @@ def update_data_table(df, page: ft.Page, max_rows=None, highlight_term=None, hig
     else:
         print(f"[DEBUG] update_data_table: Not storing globally (is_paginated=True)")
 
+    # Add accessibility announcement for data updates
+    if accessibility_manager and df is not None:
+        rows, cols = df.shape
+        if is_paginated:
+            accessibility_manager.announce_data_event("data_updated", 
+                f"Data table updated with {rows} rows and {cols} columns")
+        elif disable_pagination:
+            accessibility_manager.announce_data_event("data_preview", 
+                f"Data preview showing {rows} rows and {cols} columns")
+        else:
+            accessibility_manager.announce_data_event("data_loaded", 
+                f"Dataset loaded with {rows} rows and {cols} columns")
+
     # PERFORMANCE OPTIMIZATION: Delegate to the enhanced data view widget with error handling
     if enhanced_data_view:
         try:
@@ -668,6 +807,11 @@ async def update_progress(progress: float, message: str, page: ft.Page):
         dialog_controls["progress_bar"].value = progress / 100.0
         dialog_controls["progress_text"].value = f"{message} ({progress:.0f}%)"
         page.update()
+    
+    # Add accessibility announcement for major progress milestones
+    if accessibility_manager and progress % 25 == 0:  # Announce at 25%, 50%, 75%, 100%
+        accessibility_manager.announce_data_event("progress_update", 
+            f"{message} - {progress:.0f}% complete")
 
 
 async def show_progress(show: bool, page: ft.Page):
@@ -685,11 +829,34 @@ def show_error(message: str, page: ft.Page) -> None:
     logging.error("Dialog error: %s", message)
     print(f"[GUI Error] {message}")
     
-    # Show traditional error dialog
-    dlg = ft.AlertDialog(title=ft.Text("Error"), content=ft.Text(message))
+    # Announce error for accessibility
+    if accessibility_manager:
+        # Clean message for speech (remove emojis and formatting)
+        clean_message = message.replace("❌", "Error:").replace("💡", "Tip:")
+        accessibility_manager.announce_data_event("error", clean_message)
+    
+    # Show traditional error dialog with enhanced accessibility
+    dlg = ft.AlertDialog(
+        title=ft.Text("Error"), 
+        content=ft.Text(message),
+        actions=[
+            ft.TextButton("OK", on_click=lambda e: close_dialog(dlg))
+        ]
+    )
+    
+    # Enhance modal accessibility
+    if accessibility_manager:
+        accessibility_manager.enhance_modal_accessibility(dlg)
+    
     page.dialog = dlg
     dlg.open = True
     page.update()
+
+def close_dialog(dialog):
+    """Helper function to close any dialog."""
+    if dialog:
+        dialog.open = False
+        page.update()
 
 
 def open_data_folder(e):
@@ -1024,7 +1191,7 @@ async def load_data_result(e: ft.FilePickerResultEvent):
             
             # Update status to error
             update_data_view_status('error', message="Failed to load dataset")
-                
+            
             if last_exception:
                 show_error(f"Failed to load dataset: {last_exception}", page)
             else:
@@ -1068,13 +1235,27 @@ async def load_data_result(e: ft.FilePickerResultEvent):
                                rows=len(df), 
                                cols=len(df.columns))
         
+        # Also show the ready status in console for visibility
+        await write_output(f"✅ READY: {filename} loaded successfully", page)
+        await write_output(f"📊 Dataset: {len(df):,} rows × {len(df.columns)} columns", page)
+        await write_output(f"🚀 Ready for analysis! Switch to Data View tab to explore your data.", page)
+        
         # Set data_loaded to True BEFORE updating recommendations panel
         data_loaded = True
         print(f"[DEBUG] Set data_loaded = {data_loaded} (global variable) BEFORE recommendations")
         
+        # Announce data loaded for accessibility
+        if accessibility_manager:
+            accessibility_manager.announce_data_event(
+                "data_loaded", 
+                f"Dataset {filename} with {len(df)} rows and {len(df.columns)} columns"
+            )
+        
         # Generate intelligent recommendations for the loaded dataset
         try:
             recommendations = recommendation_engine.analyze_dataset(df, filename)
+            print(f"[DEBUG] Generated {len(recommendations) if recommendations else 0} recommendations")
+            
             if recommendations:
                 # Display in console
                 rec_text = recommendation_engine.format_recommendations_for_ui(recommendations)
@@ -1083,10 +1264,21 @@ async def load_data_result(e: ft.FilePickerResultEvent):
                 
                 # Update recommendations panel if it exists
                 rec_content = dialog_controls.get("recommendations_content")
+                rec_panel = dialog_controls.get("recommendations_panel")
+                print(f"[DEBUG] Recommendations panel exists: {rec_panel is not None}")
+                print(f"[DEBUG] Recommendations content exists: {rec_content is not None}")
+                
                 if rec_content:
                     update_recommendations_panel(recommendations, rec_content, page, data_loaded, current_df, trigger_recommended_analysis_sync)
+                    print(f"[DEBUG] Updated recommendations panel with {len(recommendations)} recommendations")
+                else:
+                    print(f"[DEBUG] WARNING: Recommendations content is None!")
+            else:
+                print(f"[DEBUG] No recommendations generated for {filename}")
         except Exception as e:
             print(f"[DEBUG] Recommendation generation failed: {e}")
+            import traceback
+            traceback.print_exc()
         
         if len(df) > dialog_controls.get("rows_per_page", 25):
             await write_output(f"[Info] Dataset has {len(df)} rows. Using pagination for display.", page)
@@ -1136,18 +1328,24 @@ async def load_data_handler(e: ft.ControlEvent):
     dialog_controls["status_label"].value = "Waiting..."
     dialog_controls["status_label"].color = ft.Colors.ORANGE
 
-    # ✅ Make sure the file_picker is set up *before* calling pick_files
+    # File picker should already be set up in main initialization
+    # Just ensure it exists before calling pick_files
     if dialog_controls["file_picker"] is None:
-        dialog_controls["file_picker"] = ft.FilePicker(on_result=load_data_result)
-        page.overlay.append(
-            dialog_controls["file_picker"]
-        )  # required for FilePicker to work
+        await write_output("❌ [Error] File picker not initialized properly", page)
+        return
 
     page.update()
-    dialog_controls["file_picker"].pick_files(
-        allow_multiple=False,
-        allowed_extensions=["csv", "xlsx", "xls", "txt"],
-    )
+    try:
+        dialog_controls["file_picker"].pick_files(
+            allow_multiple=False,
+            allowed_extensions=["csv", "xlsx", "xls", "txt"],
+        )
+        print("[DEBUG] File picker called successfully")
+    except Exception as ex:
+        await write_output(f"❌ [Error] Failed to open file picker: {ex}", page)
+        print(f"[ERROR] File picker error: {ex}")
+        import traceback
+        traceback.print_exc()
 
 
 async def chunk_csv_handler(e: ft.ControlEvent):
@@ -1207,9 +1405,23 @@ async def handle_chunk_button(e: ft.ControlEvent):
         page.update()
         return
 
+    # Get selected encoding for chunking
+    chunk_encoding = dialog_controls["chunk_encoding_dropdown"].value
+    if not chunk_encoding:
+        chunk_encoding = "utf-8"  # Default fallback
+
     dialog_controls["chunk_status"].value = "Chunking in progress..."
     app_busy = True
     page.update()
+
+    # Advanced smart announcement for chunking start
+    if accessibility_manager:
+        accessibility_manager.smart_announce(
+            f"Starting to chunk {dataset_name} into {chunk_size} MB pieces using {chunk_encoding} encoding", 
+            event_type="data_operation",
+            priority="high",
+            context="chunking_start"
+        )
 
     loop = asyncio.get_running_loop()
 
@@ -1218,23 +1430,57 @@ async def handle_chunk_button(e: ft.ControlEvent):
 
     await show_progress(True, page)
 
-    result = await asyncio.to_thread(
-        split_into_chunks,
-        dataset_name,
-        file_path,
-        chunk_size_mb=chunk_size,
-        logger_fn=lambda msg: print(msg),
-        progress_fn=progress_cb,
-    )
+    try:
+        result = await asyncio.to_thread(
+            split_into_chunks,
+            dataset_name,
+            file_path,
+            chunk_size_mb=chunk_size,
+            encoding=chunk_encoding,
+            logger_fn=lambda msg: print("[CHUNK LOG]", msg),
+            progress_fn=progress_cb,
+        )
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        dialog_controls["chunk_status"].value = f"Chunking failed: {ex}"
+        await write_output(f"[Error] Failed to chunk file: {ex}", page)
+        # Advanced smart announcement for chunking error
+        if accessibility_manager:
+            accessibility_manager.smart_announce(
+                f"Chunking failed: {str(ex)}", 
+                event_type="error",
+                priority="urgent",
+                context="chunking_error"
+            )
+        await show_progress(False, page)
+        app_busy = False
+        page.update()
+        return
 
     await show_progress(False, page)
 
-    if result and result["total_chunks"] > 0:
+    if result and result.get("total_chunks", 0) > 0:
         dialog_controls["chunk_status"].value = (
-            f"Chunked {result['total_rows']} rows into {result['total_chunks']} files."
+            f"Chunked {result['total_rows']} rows into {result['total_chunks']} files using {chunk_encoding} encoding."
         )
+        # Advanced smart announcement for successful completion with prosody
+        if accessibility_manager:
+            accessibility_manager.announce_with_prosody(
+                f"Chunking completed successfully. Created {result['total_chunks']} chunk files with {result['total_rows']} total rows", 
+                emotion="success"
+            )
     else:
         dialog_controls["chunk_status"].value = "Chunking failed. See logs."
+        print(f"[DEBUG] Chunking failed. Result: {result}")
+        # Advanced smart announcement for failure
+        if accessibility_manager:
+            accessibility_manager.smart_announce(
+                "Chunking failed. Check the logs for error details", 
+                event_type="error",
+                priority="urgent",
+                context="chunking_failure"
+            )
 
     app_busy = False
     page.update()
@@ -2205,6 +2451,10 @@ async def analysis_handler(e: ft.ControlEvent):
     # PERFORMANCE OPTIMIZATION: Reduce UI update frequency during analysis
     print(f"[DEBUG] Analysis handler: Starting {atype} analysis at {analysis_start_time}")
     
+    # Announce analysis start
+    if accessibility_manager:
+        accessibility_manager.announce_data_event("analysis_started", f"Starting {atype} analysis")
+    
     # Log user action for recommendation engine
     recommendation_engine.log_user_action(atype)
     
@@ -2260,8 +2510,16 @@ async def analysis_handler(e: ft.ControlEvent):
             # PERFORMANCE OPTIMIZATION: Single consolidated result message
             if result['success']:
                 await write_output(f"[{atype}] ✅ {result['message']} | {performance_icon} {performance_level} ({analysis_duration:.1f}s)", page)
+                # Announce successful analysis completion
+                if accessibility_manager:
+                    accessibility_manager.announce_data_event("analysis_completed", 
+                        f"{atype} analysis completed successfully in {analysis_duration:.1f} seconds")
             else:
                 await write_output(f"[{atype}] ❌ {result['message']} | Time: {analysis_duration:.1f}s", page)
+                # Announce analysis failure
+                if accessibility_manager:
+                    accessibility_manager.announce_data_event("error", 
+                        f"{atype} analysis failed: {result['message']}")
                 
         except Exception as e:
             analysis_duration = time.time() - analysis_start_time
@@ -2271,6 +2529,11 @@ async def analysis_handler(e: ft.ControlEvent):
             traceback.print_exc()
             await write_output(f"[Error] ❌ {error_msg} | Time: {analysis_duration:.1f}s", page)
             update_data_view_status('error', context=error_msg)
+            # Announce analysis error
+            if accessibility_manager:
+                accessibility_manager.announce_data_event("error", 
+                    f"{atype} analysis encountered an error: {str(e)}")
+                    
             error_msg = f"Analysis function failed for {atype}: {str(e)}"
             import traceback
             traceback.print_exc()
@@ -2320,41 +2583,46 @@ async def show_search_result(page: ft.Page):
 
 async def on_search(e: ft.ControlEvent):
     """Execute a DataFrame search based on UI selections."""
-    if current_df is None:
-        show_error("❌ Load data before searching", e.page)
-        show_error("💡 Try this instead: Click 'Load Data' to import a file first", e.page)
-        return
-
+    global current_df
+    
     term = dialog_controls["search_term"].value
-    col_value = dialog_controls["search_column"].value
-    column = None if col_value == "All Columns" else col_value
-    case = dialog_controls["case_switch"].value
-    whole = dialog_controls["whole_switch"].value
-
     if not term:
         await write_output("Enter a search term.", e.page)
         return
-
-    results = search_dataframe(current_df, term, column, case, whole)
-    dialog_controls["search_results"] = results
-    dialog_controls["search_index"] = 0
-
-    if not results:
-        await write_output("No matches found.", e.page)
-        dialog_controls["match_label"].value = "0/0"
-        # Show all data without highlighting
-        update_data_table(current_df, e.page)
+    
+    if current_df is None:
+        show_error("❌ Load data before searching", e.page)
         return
 
-    # Show all search results in the data table with highlighting
-    search_results_df = current_df.iloc[results]
-    
-    # Apply highlighting to the search results with pagination
-    highlight_col = column if column != "All Columns" else None
-    update_data_table(search_results_df, e.page, highlight_term=term, highlight_column=highlight_col)
-    
-    await write_output(f"Found {len(results)} matches for '{term}'", e.page)
-    dialog_controls["match_label"].value = f"{len(results)} matches found"
+    try:
+        col_value = dialog_controls["search_column"].value
+        column = None if col_value == "All Columns" else col_value
+        case = dialog_controls["case_switch"].value
+        whole = dialog_controls["whole_switch"].value
+
+        results = search_dataframe(current_df, term, column, case, whole)
+        dialog_controls["search_results"] = results
+        dialog_controls["search_index"] = 0
+
+        if not results:
+            dialog_controls["match_label"].value = "0/0"
+            update_data_table(current_df, e.page)
+            await write_output(f"No matches found for '{term}'", e.page)
+            # Announce no results immediately for screen reader
+            announce_immediate_change("search_completed", f"No matches found for {term}")
+        else:
+            search_results_df = current_df.iloc[results]
+            highlight_col = column if column != "All Columns" else None
+            update_data_table(search_results_df, e.page, highlight_term=term, highlight_column=highlight_col)
+            dialog_controls["match_label"].value = f"{len(results)} matches found"
+            await write_output(f"Found {len(results)} matches for '{term}'", e.page)
+            # Announce successful search immediately for screen reader
+            announce_immediate_change("search_completed", f"Found {len(results)} matches for {term}")
+
+        e.page.update()
+
+    except Exception as ex:
+        await write_output(f"Search error: {str(ex)}", e.page)
 
 
 async def on_prev_match(e: ft.ControlEvent):
@@ -2363,6 +2631,9 @@ async def on_prev_match(e: ft.ControlEvent):
         return
     dialog_controls["search_index"] = (dialog_controls["search_index"] - 1) % len(results)
     await show_search_result(e.page)
+    # Announce navigation immediately for screen reader
+    index = dialog_controls["search_index"]
+    announce_immediate_change("navigation", f"Previous match: {index + 1} of {len(results)}")
 
 
 async def on_next_match(e: ft.ControlEvent):
@@ -2371,17 +2642,23 @@ async def on_next_match(e: ft.ControlEvent):
         return
     dialog_controls["search_index"] = (dialog_controls["search_index"] + 1) % len(results)
     await show_search_result(e.page)
+    # Announce navigation immediately for screen reader
+    index = dialog_controls["search_index"]
+    announce_immediate_change("navigation", f"Next match: {index + 1} of {len(results)}")
 
 
 async def clear_search_handler(e: ft.ControlEvent):
     """Clear search results and show all data."""
+    global current_df
+    
+    # Clear all search-related controls
+    dialog_controls["search_term"].value = ""
     dialog_controls["search_results"] = None
     dialog_controls["search_index"] = 0
-    dialog_controls["search_term"].value = ""
     dialog_controls["match_label"].value = "0/0"
     
+    # Reset data view
     if current_df is not None:
-        # Show all data without highlighting, with pagination
         update_data_table(current_df, e.page)
     
     await write_output("Search cleared.", e.page)
@@ -2402,7 +2679,17 @@ def export_picker_result(e: ft.FilePickerResultEvent):
         elif export_context == "analysis":
             export_text(dialog_controls.get("analysis_text", ""), e.path)
         dialog_controls["status_label"].value = f"Saved: {e.path}"
+        
+        # Announce successful export
+        if accessibility_manager:
+            accessibility_manager.announce_data_event("export_completed", 
+                f"File exported successfully to {e.path}")
+                
     except Exception as ex:
+        # Announce export error
+        if accessibility_manager:
+            accessibility_manager.announce_data_event("error", 
+                f"Export failed: {str(ex)}")
         show_error(str(ex), e.page)
     finally:
         export_context = None
@@ -2412,6 +2699,10 @@ def export_picker_result(e: ft.FilePickerResultEvent):
 def export_dataset(e: ft.ControlEvent):
     global export_context
     export_context = "dataset"
+    # Announce export start
+    if accessibility_manager:
+        accessibility_manager.announce_data_event("export_started", 
+            "Starting dataset export")
     dialog_controls["export_picker"].save_file()
 
 
@@ -2446,12 +2737,16 @@ def build_advanced_content() -> ft.Column:
     logging.info("Building Advanced tools UI")
     print("[GUI] Building Advanced tools UI")
 
+    # Create advanced info text with reference for theme updates
+    advanced_info_text = ft.Text("💡 Auto-detection analyzes your files for optimal settings", 
+                                 size=11, italic=True)
+    dialog_controls["advanced_info_text"] = advanced_info_text
+    
     advanced_content = ft.Column(
         [
             ft.Text("Load Options", weight=ft.FontWeight.BOLD),
             ft.Row([dialog_controls.get("enc_dropdown"), dialog_controls.get("delim_dropdown")], spacing=10),
-            ft.Text("💡 Auto-detection analyzes your files for optimal settings", 
-                   size=11, color=ft.Colors.BLUE_GREY_600, italic=True),
+            advanced_info_text,
             ft.Divider(),
             ft.Text("Export", style="titleMedium"),
             ft.Row([dialog_controls.get("export_fmt"), dialog_controls.get("export_ds_btn")], spacing=10),
@@ -2470,7 +2765,11 @@ def build_advanced_content() -> ft.Column:
 def on_theme_toggle(e: ft.ControlEvent):
     page = e.page
     dark_mode = e.control.value
-    global current_theme_mode, data_view_widget
+    global current_theme_mode, data_view_widget, accessibility_manager
+
+    # Announce theme change immediately for screen reader
+    theme_name = "dark mode" if dark_mode else "light mode"
+    announce_immediate_change("theme_changed", f"Theme switched to {theme_name}")
 
     # Define your light and dark seeds
     light_seed = "#00FF7F"  # Tech Green for Light Theme
@@ -2479,12 +2778,24 @@ def on_theme_toggle(e: ft.ControlEvent):
     # Apply theme mode
     page.theme_mode = ft.ThemeMode.DARK if dark_mode else ft.ThemeMode.LIGHT
     current_theme_mode = page.theme_mode
+    
+    # Update dark mode state for accessibility reference
+    page._dark_mode_active = dark_mode
 
-    # Set theme based on the selected mode
-    if dark_mode:
-        page.dark_theme = ft.Theme(color_scheme_seed=dark_seed)
+    # Check if accessibility high contrast is enabled
+    high_contrast_enabled = accessibility_manager and accessibility_manager.high_contrast
+    
+    # Set theme based on the selected mode and accessibility settings
+    if high_contrast_enabled:
+        # Let accessibility manager handle high contrast theme
+        if accessibility_manager:
+            accessibility_manager.apply_high_contrast()
     else:
-        page.theme = ft.Theme(color_scheme_seed=light_seed)
+        # Apply normal theme
+        if dark_mode:
+            page.dark_theme = ft.Theme(color_scheme_seed=dark_seed)
+        else:
+            page.theme = ft.Theme(color_scheme_seed=light_seed)
 
     # Update Enhanced DataViewWidget theme
     if enhanced_data_view:
@@ -2506,13 +2817,99 @@ def on_theme_toggle(e: ft.ControlEvent):
     apply_data_table_theme(page)
 
     save_theme_preference(dark_mode)
+    
+    # Update all UI element colors
+    update_ui_theme_colors(page)
+    
     page.update()
 
 
 
 async def main(page: ft.Page):
     """Primary entry point for the Flet UI."""
-    global data_loaded
+    global data_loaded, accessibility_manager
+
+    # Initialize accessibility manager early
+    accessibility_manager = AccessibilityManager(page, PREFERENCES_DIR)
+    
+    # Apply saved accessibility settings
+    accessibility_manager.apply_all_settings()
+
+    # Setup combined keyboard handling - accessibility shortcuts + search shortcuts + table navigation + tab navigation
+    async def combined_keyboard_handler(e: ft.KeyboardEvent):
+        # Build key combination string for accessibility shortcuts
+        key_combo = ""
+        if e.ctrl:
+            key_combo += "ctrl+"
+        if e.shift:
+            key_combo += "shift+"
+        if e.alt:
+            key_combo += "alt+"
+        key_combo += e.key.lower()
+        
+        print(f"[Keyboard] Key pressed: {key_combo}")
+        
+        # Handle Tab key navigation for tab switching with accessibility announcements
+        if e.key == "Tab" and e.ctrl:
+            tabs = dialog_controls.get("tabs")
+            if tabs and accessibility_manager and accessibility_manager.screen_reader_mode:
+                tab_names = ["Console", "Data View", "Data Tools", "Advanced tools", "Settings"]
+                current_index = tabs.selected_index
+                
+                if e.shift:
+                    # Ctrl+Shift+Tab - Previous tab
+                    new_index = (current_index - 1) % len(tab_names)
+                else:
+                    # Ctrl+Tab - Next tab
+                    new_index = (current_index + 1) % len(tab_names)
+                
+                tabs.selected_index = new_index
+                tab_name = tab_names[new_index]
+                accessibility_manager.announce_data_event("tab_navigation", 
+                    f"Switched to {tab_name} tab")
+                print(f"[Keyboard] Tab navigation: {tab_name}")
+                page.update()
+                return  # Tab navigation handled
+        
+        # Get current data for table navigation
+        current_data = None
+        if hasattr(data_handler, 'df') and data_handler.df is not None:
+            current_data = data_handler.df
+        
+        # Use enhanced accessibility keyboard handler
+        if accessibility_manager:
+            try:
+                # Handle key event and check if it was processed
+                handled = accessibility_manager.handle_key_event(e, current_data)
+                
+                if handled:
+                    print(f"[Keyboard] Accessibility shortcut handled: {key_combo}")
+                    # Force page update to ensure UI changes are visible immediately
+                    page.update()
+                    return  # Accessibility shortcut handled
+                    
+                # Check for table navigation keys
+                if accessibility_manager.table_navigation_mode and current_data is not None:
+                    if e.key in ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]:
+                        print(f"[Keyboard] Table navigation: {e.key}")
+                        return  # Table navigation handled
+                        
+            except Exception as ex:
+                print(f"[Keyboard] Accessibility handler error for {key_combo}: {ex}")
+        
+        # Handle search-specific shortcuts if not handled by accessibility
+        if e.key == "F3":
+            print(f"[Keyboard] Search shortcut: F3 (shift={e.shift})")
+            if e.shift:
+                await on_prev_match(ft.ControlEvent(target=None, name="click", data=None, control=None, page=page))
+            else:
+                await on_next_match(ft.ControlEvent(target=None, name="click", data=None, control=None, page=page))
+        elif e.key == "Escape" and dialog_controls.get("search_term") and dialog_controls["search_term"].value:
+            print("[Keyboard] Search shortcut: Escape (clear search)")
+            await clear_search_handler(ft.ControlEvent(target=None, name="click", data=None, control=None, page=page))
+    
+    # Set the combined handler directly instead of trying to chain
+    page.on_keyboard_event = combined_keyboard_handler
 
     # Window appearance and behavior
     page.window.frameless = True
@@ -2532,6 +2929,9 @@ async def main(page: ft.Page):
     # Load saved theme preference
     dark_mode_enabled = load_theme_preference()
     page.theme_mode = ft.ThemeMode.DARK if dark_mode_enabled else ft.ThemeMode.LIGHT
+    
+    # Store dark mode state for accessibility reference
+    page._dark_mode_active = dark_mode_enabled
 
     page.window.icon = "favicon.ico"
 
@@ -2566,7 +2966,6 @@ async def main(page: ft.Page):
     default_data_path = str(Path.home() / "ProtexxaDatascope")
     dialog_controls["data_root_label"] = ft.Text(
         f"Default data folder: {default_data_path}",
-        color=ft.Colors.GREY_700,
         size=12,
     )
     dialog_controls["reset_data_root_btn"] = ft.TextButton(
@@ -2580,6 +2979,17 @@ async def main(page: ft.Page):
     dialog_controls["theme_switch"] = ft.Switch(
         label="Dark Mode", value=dark_mode_enabled, on_change=on_theme_toggle
     )
+
+    # Create settings header text with theme-aware color
+    settings_header_text = ft.Text("⚙️ Settings and preferences")
+    # Set initial color based on current theme
+    settings_header_text.color = ft.Colors.GREY_300 if dark_mode_enabled else ft.Colors.GREY_700
+    dialog_controls["settings_header_text"] = settings_header_text
+    
+    # Create data view header for theme updates (will be used in tabs)
+    data_view_header = ft.Text("📊 Data View", style="titleMedium")
+    data_view_header.color = ft.Colors.GREY_300 if dark_mode_enabled else ft.Colors.GREY_700
+    dialog_controls["data_view_header"] = data_view_header
 
     # Frameless Splash screen
     splash_content = ft.Column(
@@ -2635,6 +3045,7 @@ def on_splash_click(e: ft.ControlEvent):
 
 
 async def transition_to_gui(page: ft.Page):
+    
     # 1) Fade out splash screen
     splash = dialog_controls.get("splash_container")
     if splash:
@@ -2647,7 +3058,7 @@ async def transition_to_gui(page: ft.Page):
     page.window.title_bar_hidden = False
     page.controls.clear()
     page.update()
-
+    
     # 2) Header
     logo_ref = ft.Ref[ft.Image]()
     logo_img = ft.Image(
@@ -2708,16 +3119,15 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         width=700,
         height=300,
         border_radius=20,
-        border_color=ft.Colors.BLUE_GREY_200,
         content_padding=10,
         value=welcome_message,
         tooltip="Console output - shows analysis results, progress updates, and helpful messages"
     )
+    # Store reference for theme updates
+    dialog_controls["console_textfield"] = dialog_controls["output_text_field"]
     dialog_controls["progress_bar"] = ft.ProgressBar(
         width=700,
         height=10,
-        bgcolor=ft.Colors.GREY_300,
-        color=ft.Colors.BLUE,
         value=0,
         visible=False,
         tooltip="Shows progress for data loading and processing operations"
@@ -2725,7 +3135,6 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     dialog_controls["progress_text"] = ft.Text(
         value="",
         size=12,
-        color=ft.Colors.BLUE,
         text_align=ft.TextAlign.CENTER,
         visible=False,
         weight=ft.FontWeight.BOLD,
@@ -2782,16 +3191,20 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         alignment=ft.MainAxisAlignment.CENTER,
         spacing=10,
     )
-
+    
+    file_save_placeholder = ft.Text("(File save buttons will go here)")
+    dialog_controls["file_save_placeholder"] = file_save_placeholder
+    
     file_ops_frame = ft.Container(
         content=ft.Column(
-            [ft.Text("(File save buttons will go here)", color=ft.Colors.GREY_600)]
+            [file_save_placeholder]
         ),
         border_radius=10,
-        border=ft.border.all(1, ft.Colors.BLUE_GREY_200),
         padding=10,
         width=700,
     )
+    # Store reference for theme updates
+    dialog_controls["file_ops_frame"] = file_ops_frame
 
     dialog_controls["status_label"] = ft.Text("Ready", color=ft.Colors.BLUE)
 
@@ -2807,7 +3220,6 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     desc_text = ft.Text(
         value=analysis_help.get("Data Preview", ""), 
         size=12, 
-        color=ft.Colors.BLUE_GREY_600,
         selectable=True,
         tooltip="Click to select this help text - it updates when you change analysis types"
     )
@@ -2815,6 +3227,8 @@ Ready to explore your data? Click "Load Data" to begin! ✨
 
     def on_analysis_change(e: ft.ControlEvent):
         desc_text.value = analysis_help.get(e.control.value, "")
+        # Announce analysis type change immediately for screen reader
+        announce_immediate_change("selection_changed", f"Analysis type changed to {e.control.value}")
         e.page.update()
 
     analysis_dropdown = ft.Dropdown(
@@ -2831,11 +3245,17 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         on_change=on_analysis_change,
         tooltip="🎯 Choose what type of analysis to run on your data\n• Each analysis provides different insights\n• Descriptions update when you change selections\n• Start with 'Data Preview' if you're new to your dataset",
     )
+    
+    def on_column_change(e: ft.ControlEvent):
+        """Handle column dropdown changes."""
+        announce_immediate_change("selection_changed", f"Column changed to {e.control.value}")
+    
     column_dropdown = ft.Dropdown(
         label="Column", 
         width=200, 
         value="All Columns", 
         options=[ft.dropdown.Option("All Columns")],
+        on_change=on_column_change,
         tooltip="📊 Select specific column to analyze\n• 'All Columns': Analyze the entire dataset\n• Specific column: Focus analysis on one column\n• Options populate after loading data"
     )
     
@@ -2853,9 +3273,13 @@ Ready to explore your data? Click "Load Data" to begin! ✨
             if input_value.lower() in ["show all", "all", "showall"]:
                 new_value = -1
                 print(f"[DEBUG] Manual input change: Show All rows")
+                # Announce change immediately for screen reader
+                announce_immediate_change("selection_changed", "Rows changed to show all")
             else:
                 new_value = int(input_value)
                 print(f"[DEBUG] Manual input change: Set rows to {new_value}")
+                # Announce change immediately for screen reader
+                announce_immediate_change("selection_changed", f"Rows changed to {new_value}")
                 
             current_row_count["value"] = new_value
             print(f"[DEBUG] data_loaded = {data_loaded}")
@@ -2912,9 +3336,13 @@ Ready to explore your data? Click "Load Data" to begin! ✨
             if count == -1:
                 rows_input.value = "Show All"
                 print(f"[DEBUG] Preset button clicked: Show All rows")
+                # Announce change immediately for screen reader
+                announce_immediate_change("selection_changed", "Rows preset changed to show all")
             else:
                 rows_input.value = str(count)
                 print(f"[DEBUG] Preset button clicked: Set rows to {count}")
+                # Announce change immediately for screen reader
+                announce_immediate_change("selection_changed", f"Rows preset changed to {count}")
                 
             print(f"[DEBUG] current_row_count is now: {current_row_count['value']}")
             print(f"[DEBUG] rows_input.value is now: '{rows_input.value}'")
@@ -2960,9 +3388,13 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         ft.TextButton("Show All", on_click=set_rows_preset(-1), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), color=ft.Colors.GREEN), tooltip="🌟 Complete view - Show ALL rows\n• Analyzes entire dataset\n• No row limits applied\n• May take significant time for large files\n• Best for complete data assessment")
     ], spacing=5)
     
+    # Create preset text with reference for theme updates
+    preset_text = ft.Text("Quick presets:", size=10, tooltip="Click any preset button to instantly set the number of rows to analyze")
+    dialog_controls["preset_text"] = preset_text
+    
     rows_container = ft.Column([
         rows_input,
-        ft.Text("Quick presets:", size=10, color=ft.Colors.BLUE_GREY_600, tooltip="Click any preset button to instantly set the number of rows to analyze"),
+        preset_text,
         preset_buttons
     ], spacing=5)
     sort_switch = ft.Switch(label="Descending order", value=False, tooltip="⬇️ Sort results in descending order\n• ON: Shows largest/newest values first\n• OFF: Shows smallest/oldest values first\n• Applies to Data Preview analysis")
@@ -3014,8 +3446,8 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     search_term = ft.TextField(
         label="Search term", 
         width=200, 
-        tooltip="🔍 Enter text to find in your data\n• Search across all columns or specific column\n• Press Enter to start search\n• Case-sensitive option available\n• Supports partial and whole word matching",
-        on_submit=on_search,  # Allow search on Enter key
+        tooltip="🔍 Search your data\n• Enter search term and press Search button\n• Results show in Data View tab",
+        on_submit=on_search,
     )
     search_column = ft.Dropdown(
         label="Search Column", 
@@ -3095,8 +3527,25 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         width=200,
         value=str(page.chunk_size),
         on_change=lambda e: setattr(page, "chunk_size", int(e.control.value)),
+        tooltip="Size of each chunk file in megabytes"
     )
-    dialog_controls["chunk_status"] = ft.Text(value="", color=ft.Colors.GREY_700)
+    
+    # Add encoding dropdown for chunking
+    dialog_controls["chunk_encoding_dropdown"] = ft.Dropdown(
+        label="Encoding",
+        width=120,
+        value="utf-8",
+        options=[
+            ft.dropdown.Option("utf-8", "UTF-8"),
+            ft.dropdown.Option("latin1", "Latin-1"),
+            ft.dropdown.Option("cp1252", "CP1252"),
+            ft.dropdown.Option("utf-8-sig", "UTF-8 with BOM"),
+            ft.dropdown.Option("iso-8859-1", "ISO-8859-1"),
+        ],
+        tooltip="Text encoding for chunk files\n• UTF-8: Standard encoding (recommended)\n• Latin-1: For older files with special characters\n• CP1252: Windows encoding\n• Choose the same encoding as your source file"
+    )
+    
+    dialog_controls["chunk_status"] = ft.Text(value="")
 
     csv_chunker_card = ft.Card(
         elevation=3,
@@ -3108,10 +3557,18 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                     ft.Row(
                         [
                             dialog_controls["chunk_size_input"],
+                            dialog_controls["chunk_encoding_dropdown"],
+                        ],
+                        spacing=10,
+                        alignment="start",
+                    ),
+                    ft.Row(
+                        [
                             ft.ElevatedButton(
                                 text="Chunk CSV",
                                 icon=SPLIT_CSV_ICON,
                                 on_click=on_chunk_csv,
+                                tooltip="Split the loaded CSV file into smaller chunks"
                             ),
                             ft.ElevatedButton(
                                 text="📁 Open Chunks Folder",
@@ -3128,12 +3585,12 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         ),
     )
 
-    dialog_controls["convert_status"] = ft.Text(value="", color=ft.Colors.GREY_700)
+    dialog_controls["convert_status"] = ft.Text(value="")
     dialog_controls["convert_file_display"] = ft.Text(
-        "No file selected", color=ft.Colors.GREY_700
+        "No file selected"
     )
     dialog_controls["convert_dir_display"] = ft.Text(
-        "No folder selected", color=ft.Colors.GREY_700
+        "No folder selected"
     )
 
     convert_card = ft.Card(
@@ -3201,23 +3658,17 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     dialog_controls["data_table"] = ft.DataTable(
         columns=[ft.DataColumn(ft.Text("No Data"))],  # Default column to avoid error
         rows=[],
-        border=ft.border.all(1, ft.Colors.GREY_400),
         border_radius=10,
-        vertical_lines=ft.BorderSide(1, ft.Colors.GREY_300),
-        horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
-        heading_row_color=ft.Colors.GREY_100,
         heading_row_height=50,
         data_row_min_height=30,
         data_row_max_height=60,
         show_checkbox_column=False,
-        bgcolor=ft.Colors.WHITE,  # Ensure background is white
         column_spacing=20,  # Add spacing between columns
         horizontal_margin=10,  # Add horizontal margin
     )
     
     dialog_controls["data_table_info"] = ft.Text(
         "No data loaded",
-        color=ft.Colors.GREY_600,
         size=12
     )
 
@@ -3273,7 +3724,6 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     
     dialog_controls["pagination_info"] = ft.Text(
         "Page 1 of 1",
-        color=ft.Colors.GREY_600,
         size=12,
         weight=ft.FontWeight.W_500,
     )
@@ -3283,21 +3733,35 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     
     # Initialize both data view widgets for backward compatibility
     data_view_widget = DataViewWidget(page)
-    enhanced_data_view = EnhancedDataView(page)
+    enhanced_data_view = EnhancedDataView(page, accessibility_manager)  # Pass accessibility manager
     
     # Initialize the recommendations panel
     recommendations_panel, recommendations_content = create_recommendations_panel(page)
     dialog_controls["recommendations_panel"] = recommendations_panel
     dialog_controls["recommendations_content"] = recommendations_content
+    print(f"[DEBUG] Initialized recommendations panel: {recommendations_panel is not None}")
+    print(f"[DEBUG] Initialized recommendations content: {recommendations_content is not None}")
     
     # Keep the container reference for compatibility during transition
     data_view_container = enhanced_data_view.get_widget()
     dialog_controls["data_view_container"] = data_view_container
 
+    # Tab change handler for accessibility announcements
+    async def on_tab_change(e: ft.ControlEvent):
+        """Handle tab changes and announce the new tab for accessibility."""
+        tab_names = ["Console", "Data View", "Data Tools", "Advanced tools", "Settings"]
+        selected_index = e.control.selected_index
+        if 0 <= selected_index < len(tab_names):
+            tab_name = tab_names[selected_index]
+            # Announce tab change immediately for screen reader
+            announce_immediate_change("tab_change", f"Switched to {tab_name} tab")
+            print(f"[Accessibility] Tab changed to: {tab_name}")
+
     tabs = ft.Tabs(
         selected_index=0,
         animation_duration=200,
         expand=True,
+        on_change=on_tab_change,
         tabs=[
             ft.Tab(
                 text="Console",
@@ -3319,7 +3783,7 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                 content=ft.Column(
                     [
                         ft.Row([
-                            ft.Text("📊 Data View", style="titleMedium", color=ft.Colors.GREY_800),
+                            dialog_controls["data_view_header"],
                             ft.ElevatedButton(
                                 text="📁 Open Data Folder",
                                 on_click=open_data_folder,
@@ -3370,7 +3834,6 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                         ft.Text(
                             "🔧 Data Tools",
                             style="titleMedium",
-                            color=ft.Colors.GREY_800,
                         ),
                         csv_chunker_card,
                         dialog_controls["chunk_status"],
@@ -3383,9 +3846,14 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                 text="Settings",
                 content=ft.Column(
                     [
-                        ft.Text("⚙️ Settings and preferences", color=ft.Colors.GREY_500),
+                        dialog_controls["settings_header_text"],
                         dialog_controls["theme_switch"],
                         ft.Divider(),
+                        
+                        # Add accessibility settings section
+                        *accessibility_manager.create_settings_controls(),
+                        ft.Divider(),
+                        
                         ft.Text("📁 Data Folder Location", weight=ft.FontWeight.BOLD, style=ft.TextThemeStyle.TITLE_SMALL),
                         dialog_controls["data_root_label"],
                         ft.Row([
@@ -3400,17 +3868,20 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                         ], spacing=10),
                         ft.Text(
                             "💡 Choose a custom folder to store all dataset environments and chunks.",
-                            color=ft.Colors.GREY_600,
                             size=11,
                             italic=True,
                         ),
                     ],
                     spacing=10,
+                    scroll=ft.ScrollMode.AUTO,
                 ),
             ),
         ],
     )
     dialog_controls["tabs"] = tabs
+    
+    # Connect accessibility to tab system
+    accessibility_manager.connect_tab_system(tabs)
 
     # 6) Render with fade-in
     main_container = ft.Column(
@@ -3420,6 +3891,11 @@ Ready to explore your data? Click "Load Data" to begin! ✨
         animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT),
     )
     page.add(main_container)
+    
+    # Add accessibility live region to page (invisible but accessible to screen readers)
+    live_region = accessibility_manager.get_live_region()
+    page.add(live_region)
+    
     page.update()
     
     # Ensure Enhanced Data View theme consistency after adding to page
@@ -3432,10 +3908,103 @@ Ready to explore your data? Click "Load Data" to begin! ✨
     # Set initial status message now that the widget is on the page
     update_data_view_status('ready')
     
+    # Apply accessibility enhancements to all UI controls
+    enhance_ui_accessibility()
+    
+    # Announce app ready
+    if accessibility_manager:
+        accessibility_manager.announce_data_event("app_ready", 
+            "DataScope application is ready for use")
+    
     # Apply initial theme colors to containers
     apply_data_table_theme(page)
     
+    # Update all UI element colors for initial theme
+    update_ui_theme_colors(page)
+    
     page.update()
+
+
+def enhance_ui_accessibility():
+    """Apply accessibility enhancements to all UI controls."""
+    if not accessibility_manager:
+        return
+        
+    try:
+        # Enhance analysis controls
+        analysis_dropdown = dialog_controls.get("analysis_dropdown")
+        if analysis_dropdown:
+            accessibility_manager.enhance_control_accessibility(
+                analysis_dropdown, 
+                "Analysis type selector", 
+                "Choose the type of analysis to perform on your data. Options include data preview, missing values, duplicates, and more."
+            )
+        
+        # Enhance column selector
+        column_dropdown = dialog_controls.get("column_dropdown")
+        if column_dropdown:
+            accessibility_manager.enhance_control_accessibility(
+                column_dropdown,
+                "Column selector",
+                "Select a specific column for analysis, or choose 'All Columns' to analyze the entire dataset"
+            )
+        
+        # Enhance search controls
+        search_term = dialog_controls.get("search_term")
+        if search_term:
+            accessibility_manager.enhance_control_accessibility(
+                search_term,
+                "Search input field",
+                "Enter text to search for in your dataset. Supports exact matches and partial text searching."
+            )
+            
+        search_column = dialog_controls.get("search_column")
+        if search_column:
+            accessibility_manager.enhance_control_accessibility(
+                search_column,
+                "Search column selector",
+                "Choose which column to search in, or select 'All Columns' to search the entire dataset"
+            )
+        
+        # Enhance data table if available
+        if enhanced_data_view:
+            accessibility_manager.enhance_control_accessibility(
+                enhanced_data_view.container if hasattr(enhanced_data_view, 'container') else enhanced_data_view,
+                "Enhanced data table",
+                "Interactive data table displaying your dataset with sorting, filtering, and pagination capabilities"
+            )
+        
+        # Enhance file picker
+        file_picker = dialog_controls.get("file_picker")
+        if file_picker:
+            accessibility_manager.enhance_control_accessibility(
+                file_picker,
+                "File picker",
+                "Click to browse and select data files. Supports CSV, Excel, and text formats."
+            )
+        
+        # Enhance export controls
+        export_picker = dialog_controls.get("export_picker")
+        if export_picker:
+            accessibility_manager.enhance_control_accessibility(
+                export_picker,
+                "Export file picker",
+                "Choose where to save your exported data or analysis results"
+            )
+        
+        # Enhance progress indicators
+        progress_bar = dialog_controls.get("progress_bar")
+        if progress_bar:
+            accessibility_manager.enhance_control_accessibility(
+                progress_bar,
+                "Progress indicator",
+                "Shows the current progress of data loading or analysis operations"
+            )
+        
+        print("[Accessibility] Enhanced UI controls with accessibility features")
+        
+    except Exception as e:
+        print(f"[Accessibility] Error enhancing UI controls: {e}")
 
 
 if __name__ == "__main__":
