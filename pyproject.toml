@@ -1,0 +1,26 @@
+[project]
+name = "datascope"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "pygments",
+    "tabulate",
+    "tqdm",
+    "chardet",
+    "psutil",
+    "flet"
+]
+
+[tool.flet]
+product = "DataScope"
+org = "Team Datacleaning"
+company = "Datacleaning Team"
+
+[tool.flet.app]
+module = "datascope_UI"
+path = "src"
+icon = "assets/icon.png"
