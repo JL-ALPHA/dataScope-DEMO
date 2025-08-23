@@ -327,6 +327,7 @@ async def write_output(message: str, page: ft.Page, per_char_delay: float = 0.0,
 async def check_data_loaded(page: ft.Page):
     if not data_loaded:
         await write_output("[Error] Load data first before testing.", page)
+        sound_system.play_error_sound()
         return False
     return True
 
@@ -900,12 +901,14 @@ async def open_data_folder(e):
         except Exception as ex:
             show_error(f"Could not open folder: {str(ex)}", e.page)
     else:
-        show_error("❌ No data folder found. Load data first.", e.page)
-        await write_output("❌ No data folder found. Load data first.", e.page)
         dialog_controls["status_label"].value = "Error: No data folder found"
         dialog_controls["status_label"].color = ft.Colors.RED
+
+        show_error("❌ No data folder found. Load data first.", e.page)
+        await write_output("❌ No data folder found. Load data first.", e.page)
+
         sound_system.play_error_sound()
-        await write_output("💡 Try this instead: Click 'Load Data' button to import a file first", e.page)
+        await write_output("💡 Click 'load data' below to begin... ", e.page)
 
 
 def open_chunk_folder(e):
@@ -922,6 +925,7 @@ def open_chunk_folder(e):
     else:
         show_error("❌ No chunks folder found. Chunk a CSV file first.", e.page)
         write_output("❌ No chunks folder found. Chunk a CSV file first.")
+        sound_system.play_error_sound()
         show_error("💡 Try this instead: Load a CSV file and select 'Chunk Large CSV' to create chunks first", e.page)
 
 
@@ -1222,14 +1226,16 @@ async def load_data_result(e: ft.FilePickerResultEvent):
 
         if not load_success or df is None:
             await write_output("[Error] Failed to load dataset after all fallback attempts.", page)
-            
+            sound_system.play_error_sound()
             # Update status to error
             update_data_view_status('error', message="Failed to load dataset")
             
             if last_exception:
                 show_error(f"Failed to load dataset: {last_exception}", page)
+                sound_system.play_error_sound()
             else:
                 show_error("Failed to load dataset", page)
+                sound_system.play_error_sound()
             await reset_app_state(page)
             return
 
@@ -1271,6 +1277,7 @@ async def load_data_result(e: ft.FilePickerResultEvent):
         
         # Also show the ready status in console for visibility
         await write_output(f"✅ READY: {filename} loaded successfully", page)
+        sound_system.play_success_sound()
         await write_output(f"📊 Dataset: {len(df):,} rows × {len(df.columns)} columns", page)
         await write_output(f"🚀 Ready for analysis! Switch to Data View tab to explore your data.", page)
         
@@ -1366,6 +1373,7 @@ async def load_data_handler(e: ft.ControlEvent):
     # Just ensure it exists before calling pick_files
     if dialog_controls["file_picker"] is None:
         await write_output("❌ [Error] File picker not initialized properly", page)
+        sound_system.play_error_sound()
         return
 
     page.update()
@@ -1377,6 +1385,7 @@ async def load_data_handler(e: ft.ControlEvent):
         print("[DEBUG] File picker called successfully")
     except Exception as ex:
         await write_output(f"❌ [Error] Failed to open file picker: {ex}", page)
+        sound_system.play_error_sound()
         print(f"[ERROR] File picker error: {ex}")
         import traceback
         traceback.print_exc()
@@ -1388,6 +1397,7 @@ async def chunk_csv_handler(e: ft.ControlEvent):
     try:
         if not save_filepath:
             await write_output("[Error] No file loaded to chunk.", e.page)
+            sound_system.play_error_sound()
             return
 
         dataset_name = Path(save_filepath).stem
@@ -1396,16 +1406,19 @@ async def chunk_csv_handler(e: ft.ControlEvent):
         last_chunk_folder = chunks_dir  # Store chunk folder path for later use
 
         await write_output(f"[GUI] Chunking started: {save_filepath}", e.page)
+        sound_system.play_start_sound()
 
         split_into_chunks(save_filepath, chunks_dir, chunk_size_mb=256)
 
         await write_output(
             f"[GUI] ✅ Chunking complete. Files saved in:\n{chunks_dir}", e.page
         )
+        sound_system.play_success_sound()
 
     except Exception as ex:
         await write_output(f"[Error] Failed to chunk file: {ex}", e.page)
         show_error(f"Chunking failed: {ex}", e.page)
+        sound_system.play_error_sound()
 
 
 async def handle_chunk_button(e: ft.ControlEvent):
@@ -2409,6 +2422,7 @@ async def analysis_handler(e: ft.ControlEvent):
     # Validate analysis type with suggestions
     if not atype:
         await write_output("❌ [Error] Please select an analysis type.", page)
+        sound_system.play_error_sound()
         await write_output("💡 Try this instead: Use the 'Analysis Type' dropdown to choose what you want to analyze", page)
         await write_output("📋 Recommended for beginners: Start with 'Data Preview' to see your data structure", page)
         return
@@ -2417,6 +2431,7 @@ async def analysis_handler(e: ft.ControlEvent):
     if col and col not in current_df.columns:
         available_cols = list(current_df.columns)[:5]  # Show first 5 columns
         await write_output(f"❌ [Error] Column '{col}' not found in dataset.", page)
+        sound_system.play_error_sound()
         await write_output(f"💡 Try this instead: Choose from available columns: {available_cols}{'...' if len(current_df.columns) > 5 else ''}", page)
         await write_output("🔍 Tip: Use 'All Columns' to analyze the entire dataset", page)
         return
@@ -2450,11 +2465,13 @@ async def analysis_handler(e: ft.ControlEvent):
         if num != -1:
             if num <= 0:
                 await write_output("❌ [Error] Number of rows must be a positive integer (1 or greater).", page)
+                sound_system.play_error_sound()
                 await write_output("💡 Try this instead: Enter a positive number like 10, 100, 500, or 1000", page)
                 await write_output("🎯 Quick fix: Use the preset buttons below the input field (10, 100, 500, 1K, 5K, All)", page)
                 return
             if num > 1000000:  # 1 million row limit for safety
                 await write_output("❌ [Error] Maximum 1,000,000 rows allowed for performance reasons.", page)
+                sound_system.play_error_sound()
                 await write_output("💡 Try this instead: Use a smaller number like 10000 or 50000 for large datasets", page)
                 await write_output("🚀 Alternative: Use 'Show All' button for complete dataset analysis (may be slow)", page)
                 return
@@ -2471,6 +2488,7 @@ async def analysis_handler(e: ft.ControlEvent):
     except ValueError as ve:
         print(f"[DEBUG] Analysis handler: Failed to parse rows_input value = '{field_value}', error: {ve}")
         await write_output("❌ [Error] Rows must be a valid number (e.g., 10, 100, 1000).", page)
+        sound_system.play_error_sound()
         await write_output("💡 Try this instead: Enter a whole number like 50, 100, or 500", page)
         await write_output("🎯 Quick fix: Use the preset buttons for common values: 10, 100, 500, 1K, 5K, All", page)
         await write_output("📝 Or type 'Show All' to display the entire dataset", page)
@@ -2562,6 +2580,7 @@ async def analysis_handler(e: ft.ControlEvent):
             import traceback
             traceback.print_exc()
             await write_output(f"[Error] ❌ {error_msg} | Time: {analysis_duration:.1f}s", page)
+            sound_system.play_error_sound()
             update_data_view_status('error', context=error_msg)
             # Announce analysis error
             if accessibility_manager:
@@ -2571,7 +2590,8 @@ async def analysis_handler(e: ft.ControlEvent):
             error_msg = f"Analysis function failed for {atype}: {str(e)}"
             import traceback
             traceback.print_exc()
-            await write_output(f"[Error] ❌ {error_msg} | Failed after {analysis_duration:.2f}s", page)
+            await write_output(f"[Error] ❌ {error_msg} | Failed after {analysis_duration:.2f}s", page) 
+            sound_system.play_error_sound()
             update_data_view_status('error', context=error_msg)
     else:
         await write_output(f"[Error] ❌ Unknown analysis type: '{atype}' | Available: {list(analysis_functions.keys())}", page)
@@ -2753,6 +2773,7 @@ def export_search_results(e: ft.ControlEvent):
 def export_analysis_text(e: ft.ControlEvent):
     if not dialog_controls.get("analysis_text"):
         show_error("❌ Run analysis first", e.page)
+        sound_system.play_error_sound()
         show_error("💡 Try this instead: Select analysis type and click 'Analyze' to generate results first", e.page)
         return
     global export_context
@@ -3889,13 +3910,17 @@ Ready to explore your data? Click "Load Data" to begin! ✨
                                                         ],
                                                         spacing=10,
                                                         alignment=ft.MainAxisAlignment.START,
+                                                        wrap=True,  # Allow wrapping of controls
+                                                        expand=True,  # Take full width
                                                     ),
                                                     dialog_controls.get("desc_text"),
-                                                ]
+                                                ],
+                                                expand=True,  # Column takes full width
                                             ),
                                             padding=10,
                                             border_radius=8,
                                             margin=ft.margin.only(bottom=10),
+                                            expand=True,  # Container takes full width
                                         ),
                                         dialog_controls["recommendations_panel"],
                                         enhanced_data_view.get_widget(),
