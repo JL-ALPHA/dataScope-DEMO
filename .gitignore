@@ -1,0 +1,56 @@
+# Binaries and executables
+*.exe
+*.dll
+*.so
+*.dylib
+*.pkg
+
+# Archives and compressed files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Media files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.mp3
+*.wav
+
+# Image files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.psd
+*.ai
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+*.log.*
+
+# Cache and temporary files
+.cache/
+temp/
+tmp/
+*.tmp
+
+# Build output
+dist/
+build/
+out/
+
+# Large data files
+*.csv
+*.json
+*.xml
+*.parquet
+*.hdf5
