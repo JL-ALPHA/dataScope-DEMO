@@ -1,4 +1,5 @@
 # DataScope: Dataset Insight & Preparation Tool
+Foundation Creator: Jermaine Lucas
 
 DataScope is a standalone GUI tool designed for analysts and data cleaning teams to review, understand, and prepare datasets before transformation. It includes modular responsibilities for logging, error handling, visual summaries, and input validation.
 
